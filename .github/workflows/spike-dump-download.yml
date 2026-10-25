@@ -1,0 +1,26 @@
+name: spike-dump-download
+
+# Phase 1 spike: can CI fetch the Podcast Index dump with our honest User-Agent?
+# Requests only the first KiB and prints the response headers. If the answer is
+# 403 we record it and fall back to manual downloads; we never retry as a browser.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Request the first KiB of the dump
+        env:
+          DDM_USER_AGENT: ${{ vars.DDM_USER_AGENT }}
+        run: |
+          test -n "$DDM_USER_AGENT" || { echo "repository variable DDM_USER_AGENT is not set"; exit 1; }
+          curl -sS -o /dev/null -D - --max-time 30 --range 0-1023 \
+            -A "$DDM_USER_AGENT" \
+            https://public.podcastindex.org/podcastindex_feeds.db.tgz \
+            | grep -iE '^(HTTP/|content-length|content-range|last-modified|server|cf-mitigated)'
