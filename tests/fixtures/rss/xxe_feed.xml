@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE rss [<!ENTITY secret SYSTEM "file:///etc/hosts">]>
+<rss version="2.0">
+  <channel>
+    <title>&secret;</title>
+  </channel>
+</rss>

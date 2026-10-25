@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <title>  The Example Show  </title>
+    <link>https://show.example.com/</link>
+    <description><![CDATA[<p>Weekly talk about <b>examples</b>.</p>]]></description>
+    <itunes:summary>Summary is only a fallback.</itunes:summary>
+    <language>EN-us</language>
+    <lastBuildDate>Mon, 26 Oct 2026 08:00:00 GMT</lastBuildDate>
+    <managingEditor>editor@example.com (Ed Itor)</managingEditor>
+    <itunes:author>Example Media</itunes:author>
+    <itunes:owner>
+      <itunes:name>Owner Name</itunes:name>
+      <itunes:email>Owner@Example.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://cdn.example.com/art.jpg"/>
+    <image><url>https://cdn.example.com/fallback.jpg</url></image>
+    <podcast:guid>917393E3-1B1E-5CEF-ACE4-EDAA54E1F810</podcast:guid>
+    <itunes:new-feed-url>https://new.example.com/feed.xml</itunes:new-feed-url>
+    <itunes:type>Episodic</itunes:type>
+    <itunes:explicit>yes</itunes:explicit>
+    <itunes:category text="Business">
+      <itunes:category text="Marketing"/>
+    </itunes:category>
+    <itunes:category text="business"/>
+    <itunes:category text="Technology"/>
+    <item>
+      <title>Episode 3</title>
+      <itunes:author>Guest Author</itunes:author>
+      <pubDate>Fri, 02 Oct 2026 10:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Episode 2</title>
+      <pubDate>Fri, 25 Sep 2026 10:00:00 +0200</pubDate>
+    </item>
+    <item>
+      <title>Episode 1</title>
+      <pubDate>2026-01-15T09:30:00</pubDate>
+    </item>
+    <item>
+      <title>Scheduled episode</title>
+      <pubDate>Mon, 30 Nov 2026 10:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Broken date</title>
+      <pubDate>sometime last week</pubDate>
+    </item>
+  </channel>
+</rss>

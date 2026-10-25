@@ -7,6 +7,7 @@ from ddm.config import (
     load_demo_mcp_token,
     load_podcastindex_config,
     load_readonly_database_url,
+    load_user_agent,
     pooled_neon_url,
 )
 
@@ -120,3 +121,50 @@ def test_pooled_neon_url_leaves_pooled_urls_unchanged():
 def test_pooled_neon_url_rejects_non_neon_hosts():
     with pytest.raises(ConfigError, match="not a Neon host"):
         pooled_neon_url("postgresql://u:p@localhost:5432/db")
+
+
+def test_load_user_agent_returns_an_honest_value(monkeypatch):
+    monkeypatch.setenv("DDM_USER_AGENT", REQUIRED["DDM_USER_AGENT"])
+
+    assert load_user_agent() == REQUIRED["DDM_USER_AGENT"]
+
+
+def test_load_user_agent_accepts_a_project_url_as_contact(monkeypatch):
+    monkeypatch.setenv("DDM_USER_AGENT", "DataDiscoveryDemo/0.1 (+https://example.com/bot)")
+
+    assert load_user_agent().startswith("DataDiscoveryDemo/")
+
+
+def test_missing_user_agent_names_the_variable(monkeypatch):
+    monkeypatch.delenv("DDM_USER_AGENT", raising=False)
+
+    with pytest.raises(ConfigError, match="DDM_USER_AGENT"):
+        load_user_agent()
+
+
+def test_browser_user_agent_is_refused(monkeypatch):
+    monkeypatch.setenv("DDM_USER_AGENT", "Mozilla/5.0 (Macintosh) +mailto:a@example.com")
+
+    with pytest.raises(ConfigError, match="identify this project honestly"):
+        load_user_agent()
+
+
+def test_user_agent_without_contact_is_refused(monkeypatch):
+    monkeypatch.setenv("DDM_USER_AGENT", "DataDiscoveryDemo/0.1")
+
+    with pytest.raises(ConfigError, match="contact"):
+        load_user_agent()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "mozilla/5.0 (+mailto:a@example.com)",
+        "Bot/1 AppleWebKit/537.36 Chrome/120 (+mailto:a@example.com)",
+    ],
+)
+def test_browser_tokens_anywhere_are_refused(monkeypatch, value):
+    monkeypatch.setenv("DDM_USER_AGENT", value)
+
+    with pytest.raises(ConfigError, match="identify this project honestly"):
+        load_user_agent()

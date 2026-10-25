@@ -6,6 +6,9 @@ from urllib.parse import urlsplit, urlunsplit
 
 NEON_HOST_SUFFIX = ".neon.tech"
 NEON_POOLER_SUFFIX = "-pooler"
+# Outbound requests must say who we are; a browser string would be impersonation.
+BROWSER_UA_TOKENS = ("mozilla/", "applewebkit/", "chrome/", "safari/", "gecko/", "firefox/")
+UA_CONTACT_MARKERS = ("+mailto:", "+http")
 
 
 class ConfigError(RuntimeError):
@@ -32,6 +35,18 @@ def load_podcastindex_config() -> PodcastIndexConfig:
         api_secret=_require("PODCASTINDEX_API_SECRET"),
         user_agent=_require("DDM_USER_AGENT"),
     )
+
+
+def load_user_agent() -> str:
+    """The User-Agent for feed fetching: a project name plus a way to reach the operator."""
+    value = _require("DDM_USER_AGENT")
+    if any(token in value.lower() for token in BROWSER_UA_TOKENS):
+        raise ConfigError(
+            "DDM_USER_AGENT must identify this project honestly, not imitate a browser"
+        )
+    if not any(marker in value for marker in UA_CONTACT_MARKERS):
+        raise ConfigError("DDM_USER_AGENT must include a contact (+mailto: or +http URL)")
+    return value
 
 
 def load_demo_mcp_token() -> str:
