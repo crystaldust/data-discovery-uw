@@ -1,0 +1,61 @@
+name: refresh-podcasts
+
+# Re-fetch baseline podcast feeds and record what changed (phase 3; phase 7 adds a schedule).
+# Runs here rather than on a developer machine so feeds are reached over a clean network
+# with no proxy. The fetcher itself enforces the honest User-Agent, robots.txt, per-host
+# spacing and stopping on 401/403/429; this workflow only supplies settings.
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Feeds to fetch, least recently checked first (1-5000)"
+        required: true
+        default: "1000"
+      same_as:
+        description: "Instead, re-fetch exactly the feeds of this earlier refresh run id"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-podcasts
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DDM_USER_AGENT: ${{ vars.DDM_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Check settings and hide the database host from the public log
+        run: |
+          test -n "$DATABASE_URL" || { echo "secret DATABASE_URL is not set"; exit 1; }
+          test -n "$DDM_USER_AGENT" || { echo "variable DDM_USER_AGENT is not set"; exit 1; }
+          host=$(python3 -c 'import os, urllib.parse; print(urllib.parse.urlsplit(os.environ["DATABASE_URL"]).hostname or "")')
+          test -n "$host" && echo "::add-mask::$host"
+
+      - name: Install
+        run: uv sync --frozen --no-dev
+
+      - name: Apply migrations
+        run: uv run --no-dev ddm migrate
+
+      - name: Refresh
+        env:
+          LIMIT: ${{ inputs.limit }}
+          SAME_AS: ${{ inputs.same_as }}
+        run: |
+          if [ -n "$SAME_AS" ]; then
+            uv run --no-dev ddm refresh-podcasts --same-as "$SAME_AS"
+          else
+            uv run --no-dev ddm refresh-podcasts --limit "$LIMIT"
+          fi
