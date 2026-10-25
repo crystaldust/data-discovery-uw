@@ -3,6 +3,7 @@ import pytest
 from ddm.config import (
     ConfigError,
     PodcastIndexConfig,
+    load_database_url,
     load_demo_mcp_token,
     load_podcastindex_config,
     load_readonly_database_url,
@@ -84,6 +85,19 @@ def test_readonly_database_url_is_returned_when_set(monkeypatch):
     monkeypatch.setenv("DATABASE_URL_READONLY", "postgresql://reader@host/db")
 
     assert load_readonly_database_url() == "postgresql://reader@host/db"
+
+
+def test_database_url_is_required_and_error_names_only_the_variable(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    with pytest.raises(ConfigError, match="DATABASE_URL"):
+        load_database_url()
+
+
+def test_database_url_is_returned_stripped(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "  postgresql://owner@host/db  ")
+
+    assert load_database_url() == "postgresql://owner@host/db"
 
 
 def test_pooled_neon_url_inserts_pooler_after_endpoint_id():

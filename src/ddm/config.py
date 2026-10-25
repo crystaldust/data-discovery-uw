@@ -38,6 +38,11 @@ def load_demo_mcp_token() -> str:
     return _require("DEMO_MCP_TOKEN")
 
 
+def load_database_url() -> str:
+    """Direct (non-pooled) owner connection used by migrations and import jobs."""
+    return _require("DATABASE_URL")
+
+
 def load_readonly_database_url() -> str | None:
     return os.environ.get("DATABASE_URL_READONLY", "").strip() or None
 
