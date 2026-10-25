@@ -1,0 +1,20 @@
+# Local Postgres 18 for development and integration tests. Not used in production.
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: ddm
+      POSTGRES_PASSWORD: ddm-local-only
+      POSTGRES_DB: ddm
+    ports:
+      - "127.0.0.1:54329:5432"
+    volumes:
+      # Postgres 18 images keep data under /var/lib/postgresql (not .../data).
+      - ddm-pg:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ddm -d ddm"]
+      interval: 2s
+      retries: 30
+
+volumes:
+  ddm-pg:
