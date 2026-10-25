@@ -15,6 +15,8 @@ from psycopg.types.json import Jsonb
 
 from ddm.ingest.records import Reject, canonical_json
 
+# One importer at a time across all sources: entities and identifiers are shared tables.
+IMPORT_LOCK_KEY = 4_242_100
 RUN_STATUSES = frozenset({"running", "ok", "partial", "failed"})
 FINISHED_STATUSES = frozenset({"ok", "partial"})
 
@@ -44,9 +46,30 @@ class RunMetrics:
     bytes_fetched: int | None = None
     duration_ms: int | None = None
     db_size_bytes: int | None = None
+    rows_not_modified: int | None = None
+    rows_failed: int | None = None
+    rows_skipped: int | None = None
 
 
 METRIC_COLUMNS = tuple(f.name for f in fields(RunMetrics))
+
+
+def _sum(a: int | None, b: int | None) -> int | None:
+    if a is None:
+        return b
+    return a if b is None else a + b
+
+
+def add_metrics(a: RunMetrics, b: RunMetrics) -> RunMetrics:
+    """Column-wise sum as a new object; a column stays None only if both are unmeasured."""
+    return RunMetrics(*(_sum(getattr(a, name), getattr(b, name)) for name in METRIC_COLUMNS))
+
+
+def source_id_of(conn: psycopg.Connection, name: str) -> int:
+    row = conn.execute("SELECT source_id FROM sources WHERE name = %s", (name,)).fetchone()
+    if row is None:
+        raise RuntimeError(f"source {name} is not registered; run migrations first")
+    return row[0]
 
 
 def register_run(
@@ -121,6 +144,11 @@ def read_metrics(conn: psycopg.Connection, run_id: int) -> RunMetrics | None:
 def write_rejects(conn: psycopg.Connection, run_id: int, rejects: Sequence[Reject]) -> int:
     """Replace this run's rejects (an interrupted attempt may have left some)."""
     conn.execute("DELETE FROM import_rejects WHERE run_id = %s", (run_id,))
+    return append_rejects(conn, run_id, rejects)
+
+
+def append_rejects(conn: psycopg.Connection, run_id: int, rejects: Sequence[Reject]) -> int:
+    """Add rejects for a run written in batches; row numbers must be unique across batches."""
     with (
         conn.cursor() as cur,
         cur.copy(

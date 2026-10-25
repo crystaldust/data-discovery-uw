@@ -42,10 +42,12 @@ from ddm.ingest.resolve import (
     write_ambiguous_identifiers,
 )
 from ddm.ingest.runs import (
+    IMPORT_LOCK_KEY,
     RunMetrics,
     finish_run,
     read_metrics,
     register_run,
+    source_id_of,
     write_metrics,
     write_rejects,
 )
@@ -61,8 +63,6 @@ from ddm.sources.podcastindex_dump import (
 logger = logging.getLogger(__name__)
 
 BASELINE_CUTOFF = date(2024, 1, 1)
-# One importer at a time across all sources: entities and identifiers are shared tables.
-IMPORT_LOCK_KEY = 4_242_100
 PROVENANCE = "historical"
 ENTITY_TYPE = "podcast"
 ANALYZE_TABLES = "source_records, observations, entities, entity_identifiers"
@@ -106,13 +106,6 @@ def _read_input(dump_path: Path, cutoff: date) -> _Input:
         params=MappingProxyType(params),
         fingerprint=fingerprint_of(SOURCE_NAME, params, items),
     )
-
-
-def _source_id(conn: psycopg.Connection) -> int:
-    row = conn.execute("SELECT source_id FROM sources WHERE name = %s", (SOURCE_NAME,)).fetchone()
-    if row is None:
-        raise RuntimeError(f"source {SOURCE_NAME} is not registered; run migrations first")
-    return row[0]
 
 
 def _resolved_keys(conn: psycopg.Connection, source_id: int, keys: list[str]) -> set[str]:
@@ -186,7 +179,7 @@ def import_baseline(
     """Import the slice created before `cutoff`. Expects an autocommit connection."""
     started = clock()
     data = _read_input(dump_path, cutoff)
-    source_id = _source_id(conn)
+    source_id = source_id_of(conn, SOURCE_NAME)
     run = register_run(
         conn,
         source_id=source_id,
