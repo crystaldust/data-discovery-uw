@@ -2,6 +2,10 @@
 
 import os
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
+
+NEON_HOST_SUFFIX = ".neon.tech"
+NEON_POOLER_SUFFIX = "-pooler"
 
 
 class ConfigError(RuntimeError):
@@ -36,3 +40,16 @@ def load_demo_mcp_token() -> str:
 
 def load_readonly_database_url() -> str | None:
     return os.environ.get("DATABASE_URL_READONLY", "").strip() or None
+
+
+def pooled_neon_url(direct_url: str) -> str:
+    """Return the PgBouncer (pooler) URL for a Neon direct URL; pooled URLs pass through."""
+    parts = urlsplit(direct_url)
+    host = parts.hostname or ""
+    if not host.endswith(NEON_HOST_SUFFIX):
+        raise ConfigError("database URL is not a Neon host")
+    endpoint, _, rest = host.partition(".")
+    if endpoint.endswith(NEON_POOLER_SUFFIX):
+        return direct_url
+    netloc = parts.netloc.replace(host, f"{endpoint}{NEON_POOLER_SUFFIX}.{rest}", 1)
+    return urlunsplit(parts._replace(netloc=netloc))

@@ -6,6 +6,7 @@ from ddm.config import (
     load_demo_mcp_token,
     load_podcastindex_config,
     load_readonly_database_url,
+    pooled_neon_url,
 )
 
 REQUIRED = {
@@ -83,3 +84,25 @@ def test_readonly_database_url_is_returned_when_set(monkeypatch):
     monkeypatch.setenv("DATABASE_URL_READONLY", "postgresql://reader@host/db")
 
     assert load_readonly_database_url() == "postgresql://reader@host/db"
+
+
+def test_pooled_neon_url_inserts_pooler_after_endpoint_id():
+    direct = (
+        "postgresql://owner:pw@ep-cool-name-123456.us-east-1.aws.neon.tech/neondb?sslmode=require"
+    )
+
+    assert pooled_neon_url(direct) == (
+        "postgresql://owner:pw@ep-cool-name-123456-pooler.us-east-1.aws.neon.tech"
+        "/neondb?sslmode=require"
+    )
+
+
+def test_pooled_neon_url_leaves_pooled_urls_unchanged():
+    pooled = "postgresql://owner:pw@ep-a-1-pooler.eu-central-1.aws.neon.tech/db"
+
+    assert pooled_neon_url(pooled) == pooled
+
+
+def test_pooled_neon_url_rejects_non_neon_hosts():
+    with pytest.raises(ConfigError, match="not a Neon host"):
+        pooled_neon_url("postgresql://u:p@localhost:5432/db")
