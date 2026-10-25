@@ -472,3 +472,22 @@ def test_nothing_to_refresh_is_an_ok_run_with_zero_counts(fresh_db, clock):
 def test_limit_must_be_within_bounds(db, clock, limit):
     with pytest.raises(RefreshInputError, match="limit"):
         refresh(db, FakeFetcher(bodies()), clock, limit=limit)
+
+
+def test_a_batch_is_written_early_when_fetching_it_takes_too_long(db, clock, monkeypatch):
+    from ddm.ingest import refresh as refresh_module
+
+    batches = []
+    real_write = refresh_module.write_batch
+
+    def counting_write(conn, batch, **kwargs):
+        batches.append([t.source_key for t in batch.targets])
+        return real_write(conn, batch, **kwargs)
+
+    monkeypatch.setattr(refresh_module, "write_batch", counting_write)
+    ticks = iter(range(0, 100_000, 45))  # every clock read is 45 s later
+
+    report = refresh_podcasts(db, FakeFetcher(bodies()), now=clock, monotonic=lambda: next(ticks))
+
+    assert batches == [["1", "2"], ["3", "4"]]
+    assert report.metrics.rows_new == 4

@@ -49,6 +49,10 @@ logger = logging.getLogger(__name__)
 # Session-level: held for the whole run so two refreshes never fetch the same feeds.
 REFRESH_LOCK_KEY = 4_242_200
 BATCH_SIZE = 100
+# A batch is also written once fetching it has taken this long: the database connection
+# sits idle while feeds are fetched, and Neon suspends an idle compute after 5 minutes,
+# which drops the connection and the session lock with it.
+MAX_BATCH_SECONDS = 60.0
 DEFAULT_LIMIT = 1000
 MAX_LIMIT = 5000
 ANALYZE_TABLES = (
@@ -102,14 +106,23 @@ def _targets(
     return interleave_by_host(found, key=_host)
 
 
-def _run(conn, fetcher, *, targets, run_id, rss_id, as_of, now, batch_size):
+def _run(conn, fetcher, *, targets, run_id, rss_id, as_of, now, monotonic, batch_size):
     total, outcomes, activity = ZERO_COUNTS, Counter(), Counter()
-    for start in range(0, len(targets), batch_size):
-        batch = fetch_batch(fetcher, targets[start : start + batch_size], start + 1, now)
+    start = 0
+    while start < len(targets):
+        deadline = monotonic() + MAX_BATCH_SECONDS
+        batch = fetch_batch(
+            fetcher,
+            targets[start : start + batch_size],
+            start + 1,
+            now,
+            stop=lambda deadline=deadline: monotonic() >= deadline,
+        )
         total = write_batch(conn, batch, rss_id=rss_id, run_id=run_id, previous=total)
         outcomes.update(a.outcome for a in batch.attempts)
         activity.update(activity_status(r.source_updated_at, as_of) for r in batch.records)
-        logger.info("run_id=%d progress=%d/%d", run_id, start + len(batch.targets), len(targets))
+        start += len(batch.targets)
+        logger.info("run_id=%d progress=%d/%d", run_id, start, len(targets))
     return total, outcomes, activity
 
 
@@ -150,6 +163,7 @@ def _refresh_locked(conn, fetcher, *, limit, same_as, monotonic, now, batch_size
             rss_id=rss_id,
             as_of=as_of,
             now=now,
+            monotonic=monotonic,
             batch_size=batch_size,
         )
         conn.execute(f"ANALYZE {ANALYZE_TABLES}")

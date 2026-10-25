@@ -88,8 +88,14 @@ def fetch_batch(
     targets: Sequence[RefreshTarget],
     first_row: int,
     now: Callable[[], datetime],
+    stop: Callable[[], bool] = lambda: False,
 ) -> Batch:
+    """Fetch targets in order until done or `stop()` says the batch must be written now.
+
+    The returned batch covers only the targets actually fetched (at least one).
+    """
     attempts, records, rejects = [], [], []
+    fetched: list[RefreshTarget] = []
     for row_number, target in enumerate(targets, start=first_row):
         try:
             attempt, normalized = _attempt(fetcher, target, row_number)
@@ -104,12 +110,15 @@ def fetch_batch(
                 ),
                 None,
             )
+        fetched.append(target)
         attempts.append(attempt)
         if isinstance(normalized, Reject):
             rejects.append(normalized)
         elif normalized is not None:
             records.append(normalized)
-    return Batch(tuple(targets), tuple(attempts), tuple(records), tuple(rejects))
+        if stop():
+            break
+    return Batch(tuple(fetched), tuple(attempts), tuple(records), tuple(rejects))
 
 
 def write_batch(
