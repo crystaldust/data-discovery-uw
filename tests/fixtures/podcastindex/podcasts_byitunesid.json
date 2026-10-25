@@ -1,0 +1,43 @@
+{
+  "status": "true",
+  "query": {
+    "id": 6825813128
+  },
+  "feed": {
+    "id": 8086459,
+    "podcastGuid": "41290366-91fc-55a8-bc99-315c538fde15",
+    "medium": "podcast",
+    "title": "",
+    "url": "https://anchor.fm/s/117f07338/podcast/rss",
+    "originalUrl": "https://anchor.fm/s/117f07338/podcast/rss",
+    "link": "",
+    "description": "",
+    "author": null,
+    "ownerName": null,
+    "image": "",
+    "artwork": "",
+    "lastUpdateTime": 0,
+    "lastCrawlTime": 0,
+    "lastParseTime": 0,
+    "lastGoodHttpStatusTime": 0,
+    "lastHttpStatus": 0,
+    "contentType": "",
+    "itunesId": 6825813128,
+    "itunesType": null,
+    "generator": null,
+    "language": "",
+    "explicit": false,
+    "type": 0,
+    "dead": 0,
+    "chash": "",
+    "episodeCount": 0,
+    "crawlErrors": 0,
+    "parseErrors": 0,
+    "categories": null,
+    "locked": 0,
+    "imageUrlHash": 0,
+    "value": null,
+    "feedId": 8086459
+  },
+  "description": "Found matching items."
+}

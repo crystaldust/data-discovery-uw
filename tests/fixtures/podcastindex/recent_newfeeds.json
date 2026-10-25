@@ -1,0 +1,53 @@
+{
+  "status": true,
+  "feeds": [
+    {
+      "id": 8086459,
+      "status": "pending",
+      "url": "https://anchor.fm/s/117f07338/podcast/rss",
+      "title": "",
+      "description": "",
+      "link": "",
+      "timeAdded": 1792929498,
+      "contentHash": "",
+      "language": "",
+      "image": "",
+      "itunesId": 6825813128,
+      "source": 2,
+      "dead": 0
+    },
+    {
+      "id": 8086458,
+      "status": "pending",
+      "url": "https://anchor.fm/s/117401470/podcast/rss",
+      "title": "",
+      "description": "",
+      "link": "",
+      "timeAdded": 1792929474,
+      "contentHash": "",
+      "language": "",
+      "image": "",
+      "itunesId": 6824620200,
+      "source": 2,
+      "dead": 0
+    },
+    {
+      "id": 8086457,
+      "status": "confirmed",
+      "url": "https://www.spreaker.com/show/7494725/episodes/feed",
+      "title": "RADIO EMOTION ITALIA",
+      "description": "La musica dell'anima",
+      "link": "https://www.spreaker.com/podcast/radio-emotion-italia--7494725",
+      "timeAdded": 1792929462,
+      "contentHash": "9ed04256e2d3bb5c1b95fbab1be79200",
+      "language": "it",
+      "image": "https://d3wo5wojvuv7l.cloudfront.net/t_rss_itunes_square_1400/images.spreaker.com/original/63f18bbb8ecc384fe57ffec9e374e347.jpg",
+      "itunesId": null,
+      "source": 4,
+      "dead": 0
+    }
+  ],
+  "count": 1000,
+  "max": 1000,
+  "description": "Feeds added in the last 24 hours."
+}

@@ -1,0 +1,10 @@
+# Upload only what the web function needs. Vercel CLI does not read .gitignore.
+/*
+!/app
+!/src
+!/pyproject.toml
+!/uv.lock
+!/.python-version
+!/vercel.json
+!/README.md
+**/__pycache__
