@@ -1,4 +1,4 @@
-"""Command line entry point: `ddm migrate` and `ddm import-baseline`.
+"""Command line entry point: `ddm migrate`, `ddm import-baseline`, `ddm refresh-podcasts`.
 
 Jobs use the direct (non-pooled) DATABASE_URL: temp tables and advisory locks do not
 survive PgBouncer transaction pooling. Output names the database host at most, never
@@ -16,14 +16,26 @@ from urllib.parse import urlsplit
 
 import psycopg
 
-from ddm.config import NEON_POOLER_SUFFIX, ConfigError, load_database_url
+from ddm.config import NEON_POOLER_SUFFIX, ConfigError, load_database_url, load_user_agent
 from ddm.db.migrate import MigrationError, discover, migrate
 from ddm.ingest.baseline import BASELINE_CUTOFF, ImportReport, import_baseline
+from ddm.ingest.fetch_log import RefreshInputError
+from ddm.ingest.refresh import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    RefreshBusy,
+    RefreshReport,
+    refresh_podcasts,
+)
+from ddm.sources.rss_fetch import FeedFetcher
 
 logger = logging.getLogger(__name__)
 
 CONNECT_TIMEOUT_SECONDS = 15
+KEEPALIVE_IDLE_SECONDS = 30
 BYTES_PER_MB = 1024 * 1024
+OUTCOMES = ("fetched", "not_modified", "rejected", "failed", "skipped")
+ACTIVITY = ("active", "dormant", "dead", "unknown")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,6 +52,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=BASELINE_CUTOFF,
         help="feeds created before this date (YYYY-MM-DD) form the baseline",
     )
+    refresh = commands.add_parser(
+        "refresh-podcasts", help="re-fetch baseline RSS feeds, least recently checked first"
+    )
+    refresh.add_argument(
+        "--limit", type=int, default=DEFAULT_LIMIT, help=f"feeds to fetch (1-{MAX_LIMIT})"
+    )
+    refresh.add_argument(
+        "--same-as", type=int, help="re-fetch exactly the feeds of this earlier refresh run"
+    )
     return parser
 
 
@@ -55,7 +76,14 @@ def _connect(url: str) -> psycopg.Connection:
     if NEON_POOLER_SUFFIX in host.partition(".")[0]:
         raise ConfigError("DATABASE_URL must be the direct (non-pooled) connection for jobs")
     logger.info("connecting host=%s", host)
-    return psycopg.connect(url, autocommit=True, connect_timeout=CONNECT_TIMEOUT_SECONDS)
+    # Keepalives: a refresh leaves the connection idle while it fetches a batch.
+    return psycopg.connect(
+        url,
+        autocommit=True,
+        connect_timeout=CONNECT_TIMEOUT_SECONDS,
+        keepalives=1,
+        keepalives_idle=KEEPALIVE_IDLE_SECONDS,
+    )
 
 
 def _run_migrate(url: str) -> None:
@@ -93,6 +121,33 @@ def _run_import_baseline(url: str, dump: Path, cutoff: date) -> None:
     print(_format_report(report))
 
 
+def _counts(prefix: str, names: Sequence[str], counts) -> str:
+    return prefix + " ".join(f"{name}={counts.get(name, 0)}" for name in names)
+
+
+def _format_refresh(report: RefreshReport) -> str:
+    m = report.metrics
+    return (
+        f"run_id={report.run_id} status={report.status} targets={m.rows_in} "
+        f"{_counts('', OUTCOMES, report.outcomes)}\n"
+        f"new={m.rows_new} changed={m.rows_changed} unchanged={m.rows_unchanged} "
+        f"identifiers_added={m.identifiers_added} candidates={m.candidates_created}\n"
+        f"{_counts('activity ', ACTIVITY, report.activity)}\n"
+        f"http_requests={m.http_requests} fetched_mb={(m.bytes_fetched or 0) / BYTES_PER_MB:.1f} "
+        f"db_size={(m.db_size_bytes or 0) / BYTES_PER_MB:.1f} MB "
+        f"duration={(m.duration_ms or 0) / 1000:.1f} s"
+    )
+
+
+def _run_refresh(url: str, limit: int, same_as: int | None) -> None:
+    user_agent = load_user_agent()
+    if not 1 <= limit <= MAX_LIMIT:
+        raise RefreshInputError(f"--limit must be between 1 and {MAX_LIMIT}")
+    with _connect(url) as conn, FeedFetcher(user_agent) as fetcher:
+        report = refresh_podcasts(conn, fetcher, limit=limit, same_as=same_as)
+    print(_format_refresh(report))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -100,9 +155,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         url = load_database_url()
         if args.command == "migrate":
             _run_migrate(url)
-        else:
+        elif args.command == "import-baseline":
             _run_import_baseline(url, args.dump, args.cutoff)
-    except (ConfigError, MigrationError, FileNotFoundError) as exc:
+        else:
+            _run_refresh(url, args.limit, args.same_as)
+    except (ConfigError, MigrationError, FileNotFoundError, RefreshBusy, RefreshInputError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except (psycopg.Error, sqlite3.Error) as exc:

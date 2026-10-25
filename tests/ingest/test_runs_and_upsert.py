@@ -6,9 +6,12 @@ from ddm.db.migrate import migrate
 from ddm.ingest.records import Reject, make_record
 from ddm.ingest.runs import (
     RunMetrics,
+    add_metrics,
+    append_rejects,
     finish_run,
     read_metrics,
     register_run,
+    source_id_of,
     write_metrics,
     write_rejects,
 )
@@ -230,3 +233,49 @@ def test_upsert_of_nothing_writes_nothing(db):
 
     assert (result.new_keys, result.changed_keys, result.unchanged) == ((), (), 0)
     assert count(db, "source_records") == 0
+
+
+def test_add_metrics_sums_measured_values_and_keeps_unmeasured_ones_null():
+    first = RunMetrics(rows_in=1)
+    second = RunMetrics(rows_in=2, rows_failed=1)
+
+    total = add_metrics(first, second)
+
+    assert total == RunMetrics(rows_in=3, rows_failed=1)
+    assert total.http_requests is None
+    assert first == RunMetrics(rows_in=1)
+
+
+def test_new_fetch_outcome_metrics_round_trip(db):
+    handle = register(db)
+    metrics = RunMetrics(rows_in=5, rows_not_modified=2, rows_failed=1, rows_skipped=1)
+
+    with db.transaction():
+        write_metrics(db, handle.run_id, metrics)
+
+    assert read_metrics(db, handle.run_id) == metrics
+
+
+def test_append_rejects_keeps_rows_from_earlier_batches(db):
+    handle = register(db)
+    first = [Reject(row_number=1, source_key="1", reason="malformed_xml", raw={})]
+    second = [Reject(row_number=7, source_key="7", reason="unsupported_format", raw={})]
+
+    with db.transaction():
+        append_rejects(db, handle.run_id, first)
+    with db.transaction():
+        written = append_rejects(db, handle.run_id, second)
+
+    assert written == 1
+    assert db.execute(
+        "select row_number, reason from import_rejects order by row_number"
+    ).fetchall() == [(1, "malformed_xml"), (7, "unsupported_format")]
+
+
+def test_source_id_of_finds_registered_sources(db):
+    assert (source_id_of(db, "podcastindex_dump"), source_id_of(db, "podcast_rss")) == (1, 2)
+
+
+def test_source_id_of_fails_for_an_unregistered_source(db):
+    with pytest.raises(RuntimeError, match="not registered"):
+        source_id_of(db, "nope")

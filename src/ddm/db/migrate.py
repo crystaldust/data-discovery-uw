@@ -17,6 +17,7 @@ import psycopg
 logger = logging.getLogger(__name__)
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+LOCK_TIMEOUT = "5s"
 FILENAME_PATTERN = re.compile(r"(\d{4})_([a-z0-9_]+)\.sql")
 MIGRATION_LOCK_KEY = 4_242_001
 # The import upsert relies on PostgreSQL 18's RETURNING old.
@@ -99,6 +100,8 @@ def _verify_history(migrations: Sequence[Migration], applied: dict[int, str]) ->
 def _apply(conn: psycopg.Connection, migration: Migration) -> bool:
     with conn.transaction():
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATION_LOCK_KEY,))
+        # Fail fast instead of queueing behind a running import and blocking every writer.
+        conn.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
         already = conn.execute(
             "SELECT 1 FROM schema_migrations WHERE version = %s", (migration.version,)
         ).fetchone()

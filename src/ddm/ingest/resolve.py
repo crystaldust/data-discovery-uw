@@ -44,6 +44,13 @@ class ResolutionPlan:
     strong_id_merges: int
 
 
+@dataclass(frozen=True)
+class AttachmentPlan:
+    new_identifiers: tuple[tuple[str, str, UUID], ...]
+    candidates: tuple[tuple[str, UUID, dict[str, Any]], ...]
+    single_value_conflicts: int
+
+
 def find_ambiguous_identifiers(records: Iterable[NormalizedRecord]) -> dict[Identifier, int]:
     counts = Counter(i for r in records for i in set(r.identifiers))
     return {i: n for i, n in counts.items() if n > MAX_RECORDS_PER_IDENTIFIER}
@@ -117,6 +124,52 @@ def plan_resolution(
     )
 
 
+def plan_identifier_attachments(
+    records: Iterable[NormalizedRecord],
+    entity_by_key: Mapping[str, UUID],
+    existing: Mapping[Identifier, UUID],
+    observed_in: str,
+    ambiguous: frozenset[Identifier] = frozenset(),
+) -> AttachmentPlan:
+    """Identifiers seen on records whose entity is already known: append, never re-merge.
+
+    A new identifier joins the record's entity unless it is a second value of a
+    single-valued kind (counted, skipped). One already owned by another entity is queued
+    as a candidate for review, as in plan_resolution.
+    """
+    index = dict(existing)
+    single_values = _single_values(index)
+    new_identifiers, candidates = [], []
+    conflicts = 0
+    for record in sorted(records, key=lambda r: source_key_order(r.source_key)):
+        entity_id = entity_by_key[record.source_key]
+        shared: dict[UUID, list] = {}
+        for kind, value in record.identifiers:
+            if (kind, value) in ambiguous:
+                continue
+            owner = index.get((kind, value))
+            if owner is None:
+                known = single_values.get(entity_id, {})
+                if kind in SINGLE_VALUED_KINDS and known.get(kind, value) != value:
+                    conflicts += 1
+                    continue
+                index[(kind, value)] = entity_id
+                new_identifiers.append((kind, value, entity_id))
+                if kind in SINGLE_VALUED_KINDS:
+                    single_values.setdefault(entity_id, {})[kind] = value
+            elif owner != entity_id:
+                shared.setdefault(owner, []).append([kind, value])
+        candidates.extend(
+            (record.source_key, other, {"shared": pairs, "observed_in": observed_in})
+            for other, pairs in shared.items()
+        )
+    return AttachmentPlan(
+        new_identifiers=tuple(new_identifiers),
+        candidates=tuple(candidates),
+        single_value_conflicts=conflicts,
+    )
+
+
 def load_identifier_index(
     conn: psycopg.Connection, pairs: Iterable[Identifier]
 ) -> dict[Identifier, UUID]:
@@ -169,6 +222,45 @@ def _copy_rows(conn: psycopg.Connection, statement: str, types: Sequence[str], r
             copy.write_row(row)
 
 
+def write_identifiers(
+    conn: psycopg.Connection,
+    rows: Iterable[tuple[str, str, UUID]],
+    *,
+    source_id: int,
+    run_id: int,
+) -> None:
+    _copy_rows(
+        conn,
+        "COPY entity_identifiers (id_kind, id_value, entity_id, source_id, added_run) FROM STDIN",
+        ["text", "text", "uuid", "int2", "int8"],
+        ((kind, value, eid, source_id, run_id) for kind, value, eid in rows),
+    )
+
+
+def write_candidates(
+    conn: psycopg.Connection,
+    candidates: Iterable[tuple[str, UUID, dict[str, Any]]],
+    *,
+    source_id: int,
+    run_id: int,
+) -> int:
+    """Queue candidates for review; returns how many were new (repeats are ignored)."""
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO candidate_matches
+              (source_id, source_key, entity_id, method, score, features, created_run)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (source_id, source_key, entity_id, method) DO NOTHING
+            """,
+            [
+                (source_id, key, eid, CONFLICT_METHOD, CONFLICT_SCORE, Jsonb(features), run_id)
+                for key, eid, features in candidates
+            ],
+        )
+        return max(cur.rowcount, 0)
+
+
 def apply_resolution(
     conn: psycopg.Connection,
     plan: ResolutionPlan,
@@ -190,25 +282,8 @@ def apply_resolution(
         ["uuid", "text", "text", "text", "int8"],
         ((eid, entity_type, name, first_seen_kind, run_id) for eid, name, _ in plan.new_entities),
     )
-    _copy_rows(
-        conn,
-        "COPY entity_identifiers (id_kind, id_value, entity_id, source_id, added_run) FROM STDIN",
-        ["text", "text", "uuid", "int2", "int8"],
-        ((kind, value, eid, source_id, run_id) for kind, value, eid in plan.new_identifiers),
-    )
-    with conn.cursor() as cur:
-        cur.executemany(
-            """
-            INSERT INTO candidate_matches
-              (source_id, source_key, entity_id, method, score, features, created_run)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (source_id, source_key, entity_id, method) DO NOTHING
-            """,
-            [
-                (source_id, key, eid, CONFLICT_METHOD, CONFLICT_SCORE, Jsonb(features), run_id)
-                for key, eid, features in plan.candidates
-            ],
-        )
+    write_identifiers(conn, plan.new_identifiers, source_id=source_id, run_id=run_id)
+    write_candidates(conn, plan.candidates, source_id=source_id, run_id=run_id)
     logger.info(
         "step=resolve entities=%d identifiers=%d merges=%d candidates=%d",
         len(plan.new_entities),
@@ -216,3 +291,22 @@ def apply_resolution(
         plan.strong_id_merges,
         len(plan.candidates),
     )
+
+
+def apply_attachments(
+    conn: psycopg.Connection, plan: AttachmentPlan, *, source_id: int, run_id: int
+) -> int:
+    """Write attached identifiers and candidates in the caller's transaction.
+
+    Returns the number of candidates that were new: a conflict seen again on the next
+    refresh is already queued and must not be counted twice.
+    """
+    write_identifiers(conn, plan.new_identifiers, source_id=source_id, run_id=run_id)
+    created = write_candidates(conn, plan.candidates, source_id=source_id, run_id=run_id)
+    logger.info(
+        "step=attach identifiers=%d candidates=%d single_value_conflicts=%d",
+        len(plan.new_identifiers),
+        created,
+        plan.single_value_conflicts,
+    )
+    return created

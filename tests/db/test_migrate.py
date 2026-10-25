@@ -17,6 +17,9 @@ EXPECTED_TABLES = {
     "observations",
     "candidate_matches",
     "ambiguous_identifiers",
+    "feed_fetch_state",
+    "fetch_attempts",
+    "contact_routes",
 }
 
 
@@ -30,6 +33,7 @@ def test_discover_returns_bundled_migrations_in_version_order():
     assert [(m.version, m.name) for m in migrations] == [
         (1, "extensions_and_runs"),
         (2, "records_and_entities"),
+        (3, "podcast_refresh"),
     ]
     assert all(len(m.checksum) == 64 for m in migrations)
 
@@ -66,7 +70,7 @@ def test_migrate_creates_every_table_on_an_empty_database(fresh_db):
             "select tablename from pg_tables where schemaname = 'public'"
         ).fetchall()
     }
-    assert [m.version for m in applied] == [1, 2]
+    assert [m.version for m in applied] == [1, 2, 3]
     assert tables == EXPECTED_TABLES
 
 
@@ -181,3 +185,97 @@ def test_sources_are_seeded_with_licence_and_access(fresh_db):
     ).fetchone()
 
     assert row == (1, "MIT")
+
+
+@pytest.mark.integration
+def test_podcast_rss_source_is_seeded(fresh_db):
+    migrate(fresh_db)
+
+    row = fresh_db.execute("select source_id from sources where name = 'podcast_rss'").fetchone()
+
+    assert row == (2,)
+
+
+@pytest.mark.integration
+def test_contact_routes_reject_unknown_purpose_and_empty_value(fresh_db):
+    migrate(fresh_db)
+    with fresh_db.transaction():
+        run_id = fresh_db.execute(
+            """insert into import_runs
+                 (source_id, run_kind, input_fingerprint, is_complete_snapshot)
+               values (2, 'refresh', 'fp', false) returning run_id"""
+        ).fetchone()[0]
+        entity_id = fresh_db.execute(
+            """insert into entities (entity_id, entity_type, first_seen_kind, first_seen_run)
+               values (gen_random_uuid(), 'podcast', 'observed', %s) returning entity_id""",
+            (run_id,),
+        ).fetchone()[0]
+    insert = """insert into contact_routes
+        (entity_id, route_type, value, syntax_valid, affiliation_status, affiliation_basis,
+         purpose, purpose_basis, source_id, source_key, provenance, first_seen_run,
+         checked_run, checked_at)
+        values (%s, 'website', %s, true, 'confirmed', 'b', %s, 'b', 2, '1', 'observed',
+                %s, %s, now())"""
+
+    for value, purpose in (("https://a.example.com", "marketing"), ("", "general")):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            with fresh_db.transaction():
+                fresh_db.execute(insert, (entity_id, value, purpose, run_id, run_id))
+
+
+@pytest.mark.integration
+def test_fetch_attempts_require_a_reason_unless_the_fetch_succeeded(fresh_db):
+    migrate(fresh_db)
+    with fresh_db.transaction():
+        run_id = fresh_db.execute(
+            """insert into import_runs
+                 (source_id, run_kind, input_fingerprint, is_complete_snapshot)
+               values (2, 'refresh', 'fp', false) returning run_id"""
+        ).fetchone()[0]
+    insert = """insert into fetch_attempts
+        (run_id, source_key, url, outcome, reason, bytes, elapsed_ms, attempted_at)
+        values (%s, %s, 'https://a.example.com/f', %s, %s, 0, 0, now())"""
+
+    for key, outcome, reason in (("1", "failed", None), ("2", "fetched", "x")):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            with fresh_db.transaction():
+                fresh_db.execute(insert, (run_id, key, outcome, reason))
+
+
+@pytest.mark.integration
+def test_reader_role_cannot_read_contact_routes_but_can_read_the_fetch_log(fresh_db):
+    fresh_db.execute(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ddm_reader') "
+        "THEN CREATE ROLE ddm_reader NOLOGIN; END IF; END $$"
+    )
+    fresh_db.execute(
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO ddm_reader"
+    )
+    try:
+        migrate(fresh_db)
+
+        def can_read(table):
+            return fresh_db.execute(
+                "select has_table_privilege('ddm_reader', %s, 'SELECT')", (table,)
+            ).fetchone()[0]
+
+        assert can_read("contact_routes") is False
+        assert can_read("fetch_attempts") is True
+    finally:
+        fresh_db.execute(
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT ON TABLES FROM ddm_reader"
+        )
+        fresh_db.execute("DROP OWNED BY ddm_reader")
+        fresh_db.execute("DROP ROLE ddm_reader")
+
+
+@pytest.mark.integration
+def test_migrations_give_up_quickly_when_a_table_is_locked(fresh_db, pg_url, tmp_path):
+    write(tmp_path, "0001_first.sql", "create table t1 (id int);")
+    migrate(fresh_db, discover(tmp_path))
+    write(tmp_path, "0002_second.sql", "alter table t1 add column x int;")
+
+    with psycopg.connect(pg_url) as holder:
+        holder.execute("lock table t1 in access exclusive mode")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            migrate(fresh_db, discover(tmp_path))

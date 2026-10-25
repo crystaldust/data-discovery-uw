@@ -6,6 +6,7 @@ from ddm.ingest.resolve import (
     CONFLICT_METHOD,
     MAX_RECORDS_PER_IDENTIFIER,
     find_ambiguous_identifiers,
+    plan_identifier_attachments,
     plan_resolution,
 )
 
@@ -208,3 +209,97 @@ def test_three_records_sharing_an_identifier_are_not_ambiguous():
     records = [record(str(k), ("podcast_guid", "g")) for k in range(MAX_RECORDS_PER_IDENTIFIER)]
 
     assert find_ambiguous_identifiers(records) == {}
+
+
+RSS = "podcast_rss"
+E1, E2 = uuid.UUID(int=1), uuid.UUID(int=2)
+
+
+def baseline_index():
+    return {
+        ("podcastindex_id", "1"): E1,
+        ("feed_url", "a.com/1"): E1,
+        ("podcast_guid", "g1"): E1,
+        ("podcastindex_id", "2"): E2,
+        ("feed_url", "b.com/2"): E2,
+    }
+
+
+def attach(records, existing=None, ambiguous=frozenset()):
+    entity_by_key = {"1": E1, "2": E2}
+    index = baseline_index() if existing is None else existing
+    return plan_identifier_attachments(records, entity_by_key, index, RSS, ambiguous)
+
+
+def test_new_identifier_is_attached_to_the_records_entity():
+    plan = attach([record("1", ("feed_url", "moved.com/1"))])
+
+    assert plan.new_identifiers == (("feed_url", "moved.com/1", E1),)
+    assert (plan.candidates, plan.single_value_conflicts) == ((), 0)
+
+
+def test_identifiers_the_entity_already_has_are_not_attached_again():
+    plan = attach([record("1", ("feed_url", "a.com/1"), ("podcast_guid", "g1"))])
+
+    assert plan.new_identifiers == ()
+
+
+def test_identifier_of_another_entity_becomes_a_candidate_not_an_attachment():
+    plan = attach([record("1", ("feed_url", "b.com/2"))])
+
+    assert plan.new_identifiers == ()
+    assert plan.candidates == (
+        ("1", E2, {"shared": [["feed_url", "b.com/2"]], "observed_in": RSS}),
+    )
+
+
+def test_two_identifiers_of_one_other_entity_give_one_candidate():
+    plan = attach([record("1", ("feed_url", "b.com/2"), ("podcastindex_id", "2"))])
+
+    assert plan.candidates == (
+        (
+            "1",
+            E2,
+            {"shared": [["feed_url", "b.com/2"], ["podcastindex_id", "2"]], "observed_in": RSS},
+        ),
+    )
+
+
+def test_a_second_guid_for_an_entity_is_counted_as_a_conflict_and_not_attached():
+    plan = attach([record("1", ("podcast_guid", "g2"))])
+
+    assert plan.new_identifiers == ()
+    assert plan.single_value_conflicts == 1
+
+
+def test_ambiguous_identifiers_are_skipped():
+    plan = attach(
+        [record("1", ("podcast_guid", "shared"))],
+        existing={("podcastindex_id", "1"): E1},
+        ambiguous=frozenset({("podcast_guid", "shared")}),
+    )
+
+    assert plan.new_identifiers == ()
+
+
+def test_identifiers_attached_earlier_in_the_batch_are_seen_by_later_records():
+    plan = attach([record("1", ("feed_url", "new.com/x")), record("2", ("feed_url", "new.com/x"))])
+
+    assert plan.new_identifiers == (("feed_url", "new.com/x", E1),)
+    assert plan.candidates == (
+        ("2", E1, {"shared": [["feed_url", "new.com/x"]], "observed_in": RSS}),
+    )
+
+
+def test_attachment_planning_does_not_modify_the_given_index():
+    index = baseline_index()
+
+    attach([record("1", ("feed_url", "moved.com/1"))], existing=index)
+
+    assert index == baseline_index()
+
+
+def test_attachment_plan_of_nothing_is_empty():
+    plan = attach([])
+
+    assert (plan.new_identifiers, plan.candidates, plan.single_value_conflicts) == ((), (), 0)
