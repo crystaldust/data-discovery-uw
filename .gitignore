@@ -1,0 +1,27 @@
+# Local data and secrets
+data/
+.env
+.env.*
+!.env.example
+
+# Private working notes (bid strategy, pricing, analysis) - never publish
+.claude/
+docs/requirement.md
+docs/analysis.md
+docs/proposal.md
+docs/tech-match.md
+docs/research-postgres-incremental.md
+docs/spike-findings.md
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Tooling
+.vercel/
+.DS_Store
