@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import pytest
 
 from ddm.config import (
@@ -7,6 +9,7 @@ from ddm.config import (
     load_demo_mcp_token,
     load_podcastindex_config,
     load_readonly_database_url,
+    load_refused_backoff,
     load_user_agent,
     pooled_neon_url,
 )
@@ -168,3 +171,30 @@ def test_browser_tokens_anywhere_are_refused(monkeypatch, value):
 
     with pytest.raises(ConfigError, match="identify this project honestly"):
         load_user_agent()
+
+
+DEFAULT_BACKOFF = timedelta(days=30)
+
+
+@pytest.mark.parametrize("value", [None, "", "  "])
+def test_refused_backoff_defaults_when_unset_or_blank(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("DDM_REFUSED_BACKOFF_DAYS", raising=False)
+    else:
+        monkeypatch.setenv("DDM_REFUSED_BACKOFF_DAYS", value)
+
+    assert load_refused_backoff(DEFAULT_BACKOFF) == DEFAULT_BACKOFF
+
+
+def test_refused_backoff_is_read_in_days(monkeypatch):
+    monkeypatch.setenv("DDM_REFUSED_BACKOFF_DAYS", " 7 ")
+
+    assert load_refused_backoff(DEFAULT_BACKOFF) == timedelta(days=7)
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "366", "1.5", "a week", "\u00b2"])
+def test_refused_backoff_out_of_range_or_not_a_whole_number_names_the_variable(monkeypatch, value):
+    monkeypatch.setenv("DDM_REFUSED_BACKOFF_DAYS", value)
+
+    with pytest.raises(ConfigError, match="DDM_REFUSED_BACKOFF_DAYS"):
+        load_refused_backoff(DEFAULT_BACKOFF)

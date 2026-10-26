@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass
+from datetime import timedelta
 from urllib.parse import urlsplit, urlunsplit
 
 NEON_HOST_SUFFIX = ".neon.tech"
@@ -9,6 +10,7 @@ NEON_POOLER_SUFFIX = "-pooler"
 # Outbound requests must say who we are; a browser string would be impersonation.
 BROWSER_UA_TOKENS = ("mozilla/", "applewebkit/", "chrome/", "safari/", "gecko/", "firefox/")
 UA_CONTACT_MARKERS = ("+mailto:", "+http")
+MAX_REFUSED_BACKOFF_DAYS = 365
 
 
 class ConfigError(RuntimeError):
@@ -47,6 +49,19 @@ def load_user_agent() -> str:
     if not any(marker in value for marker in UA_CONTACT_MARKERS):
         raise ConfigError("DDM_USER_AGENT must include a contact (+mailto: or +http URL)")
     return value
+
+
+def load_refused_backoff(default: timedelta) -> timedelta:
+    """How long a host that answered 401/403 without Retry-After is left alone; optional."""
+    name = "DDM_REFUSED_BACKOFF_DAYS"
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    if not (value.isascii() and value.isdigit()) or not 1 <= int(value) <= MAX_REFUSED_BACKOFF_DAYS:
+        raise ConfigError(
+            f"{name} must be a whole number of days from 1 to {MAX_REFUSED_BACKOFF_DAYS}"
+        )
+    return timedelta(days=int(value))
 
 
 def load_demo_mcp_token() -> str:

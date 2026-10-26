@@ -250,6 +250,31 @@ def test_403_stops_all_requests_to_that_host_for_the_run():
     assert [r.url.path for r in handler.feed_requests()] == ["/show.xml", "/x.xml"]
 
 
+def test_refused_backoff_can_be_configured_and_is_inherited_by_skipped_feeds():
+    handler = Recorder({"/show.xml": httpx.Response(403), "/other.xml": ok()})
+    fetcher = make_fetcher(handler, refused_backoff=timedelta(days=3))
+
+    refused = fetch(fetcher)
+    blocked = fetch(fetcher, url="https://feeds.example.com/other.xml")
+
+    assert refused.retry_after == NOW + timedelta(days=3)
+    assert blocked.retry_after == refused.retry_after
+
+
+def test_configured_refused_backoff_does_not_override_retry_after():
+    handler = Recorder({"/show.xml": httpx.Response(403, headers={"Retry-After": "120"})})
+    fetcher = make_fetcher(handler, refused_backoff=timedelta(days=3))
+
+    assert fetch(fetcher).retry_after == NOW + timedelta(seconds=120)
+
+
+def test_429_without_retry_after_ignores_the_refused_backoff():
+    handler = Recorder({"/show.xml": httpx.Response(429)})
+    fetcher = make_fetcher(handler, refused_backoff=timedelta(days=3))
+
+    assert fetch(fetcher).retry_after == NOW + timedelta(days=1)
+
+
 def test_429_records_retry_after_in_seconds_and_is_not_retried():
     handler = Recorder({"/show.xml": httpx.Response(429, headers={"Retry-After": "120"})})
 

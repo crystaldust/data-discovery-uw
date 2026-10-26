@@ -31,6 +31,8 @@ jobs:
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DDM_USER_AGENT: ${{ vars.DDM_USER_AGENT }}
+      # Optional; unset means 30 days.
+      DDM_REFUSED_BACKOFF_DAYS: ${{ vars.DDM_REFUSED_BACKOFF_DAYS }}
     steps:
       - uses: actions/checkout@v5
 
