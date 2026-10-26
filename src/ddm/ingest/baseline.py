@@ -13,7 +13,6 @@ always reads the whole slice), and records that already have an entity are not r
 again when their identifiers change.
 """
 
-import hashlib
 import logging
 import time
 from collections.abc import Callable, Mapping
@@ -28,15 +27,17 @@ import psycopg
 from ddm.ingest.records import (
     NormalizedRecord,
     Reject,
-    canonical_json,
     content_hash,
     fingerprint_item,
+    reject_digest,
 )
 from ddm.ingest.records import input_fingerprint as fingerprint_of
 from ddm.ingest.resolve import (
+    RESOLUTION_RULES,
     apply_resolution,
     find_ambiguous_identifiers,
     load_ambiguous_identifiers,
+    load_entity_titles,
     load_identifier_index,
     plan_resolution,
     write_ambiguous_identifiers,
@@ -84,10 +85,6 @@ class _Input:
     fingerprint: str
 
 
-def _reject_digest(reject: Reject) -> bytes:
-    return hashlib.sha256(canonical_json(dict(reject.raw)).encode()).digest()
-
-
 def _read_input(dump_path: Path, cutoff: date) -> _Input:
     slice_params = SliceParams(created_before=cutoff)
     records: list[NormalizedRecord] = []
@@ -97,9 +94,13 @@ def _read_input(dump_path: Path, cutoff: date) -> _Input:
         (records if isinstance(result, NormalizedRecord) else rejects).append(result)
     # Keys and rejects count too: renumbered rows or a changed bad row make a different input.
     items = [fingerprint_item(r.source_key, content_hash(r)) for r in records] + [
-        fingerprint_item(f"reject:{r.row_number}", _reject_digest(r)) for r in rejects
+        fingerprint_item(f"reject:{r.row_number}", reject_digest(r)) for r in rejects
     ]
-    params = {**asdict(slice_params), "normalizer_version": NORMALIZER_VERSION}
+    params = {
+        **asdict(slice_params),
+        "normalizer_version": NORMALIZER_VERSION,
+        "resolution_rules": RESOLUTION_RULES,
+    }
     return _Input(
         records=tuple(records),
         rejects=tuple(rejects),
@@ -137,7 +138,8 @@ def _write_run_data(
     ambiguous = load_ambiguous_identifiers(conn)
     usable = (i for r in to_resolve for i in r.identifiers if i not in ambiguous)
     index = load_identifier_index(conn, usable)
-    plan = plan_resolution(to_resolve, index, SOURCE_NAME, ambiguous)
+    titles = load_entity_titles(conn, index.values())
+    plan = plan_resolution(to_resolve, index, SOURCE_NAME, ambiguous, titles)
     resolver(
         conn,
         plan,

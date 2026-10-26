@@ -6,6 +6,7 @@ never counts as a change. Unknown values are absent from attrs, never placeholde
 
 import hashlib
 import json
+import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -111,3 +112,54 @@ def input_fingerprint(source_name: str, params: Mapping[str, Any], hashes: Itera
     for item in sorted(hashes):
         digest.update(item)
     return digest.hexdigest()
+
+
+def reject_digest(reject: Reject) -> bytes:
+    """A reject's contribution to an input fingerprint: the raw values it was made from."""
+    return hashlib.sha256(canonical_json(dict(reject.raw)).encode()).digest()
+
+
+# Rejects keep untrusted source data for inspection; bound it so one feed cannot break or
+# bloat the write (jsonb refuses NUL and lone surrogates).
+MAX_RAW_CHARS = 2000
+MAX_RAW_DEPTH = 4
+MAX_RAW_ITEMS = 100
+
+
+def safe_raw(value: Any, depth: int = 0) -> Any:
+    """A JSON-safe, size-bounded copy of untrusted data."""
+    if isinstance(value, str):
+        text = value.replace("\x00", "").encode("utf-8", "replace").decode("utf-8")
+        return text[:MAX_RAW_CHARS]
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    if depth >= MAX_RAW_DEPTH:
+        return None
+    if isinstance(value, Mapping):
+        items = list(value.items())[:MAX_RAW_ITEMS]
+        return {safe_raw(str(k), depth + 1): safe_raw(v, depth + 1) for k, v in items}
+    if isinstance(value, list | tuple):
+        return [safe_raw(v, depth + 1) for v in value[:MAX_RAW_ITEMS]]
+    return None
+
+
+# Code points below this are Basic Latin through Latin Extended-B.
+LATIN_END = "\u0250"
+
+
+def norm_title(text: str | None) -> str | None:
+    """Close to the database's norm_text: case-folded, single spaces, and accents removed
+    from Latin letters only. Combining marks elsewhere (Japanese dakuten, Indic signs) are
+    part of the word and are kept."""
+    if text is None:
+        return None
+    kept, after_latin = [], False
+    for char in unicodedata.normalize("NFKD", text):
+        if unicodedata.combining(char):
+            if after_latin:
+                continue
+        else:
+            after_latin = char < LATIN_END
+        kept.append(char)
+    plain = unicodedata.normalize("NFC", "".join(kept))
+    return " ".join(plain.casefold().split()) or None

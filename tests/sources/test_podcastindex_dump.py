@@ -61,6 +61,22 @@ def test_slice_query_passes_values_as_parameters():
     )
 
 
+def test_slice_with_created_from_keeps_only_the_window(tmp_path):
+    rows = [dump_row(1), dump_row(2, createdOn=AFTER_CUTOFF), dump_row(3, createdOn=1800000000)]
+    path = make_dump(tmp_path, rows)
+    window = SliceParams(created_from=CUTOFF, created_before=date(2026, 1, 1))
+
+    keys = [row["id"] for row in iter_slice_rows(path, window)]
+
+    assert keys == [2]
+
+
+def test_slice_query_without_created_from_has_no_lower_bound():
+    sql, _ = slice_query(SliceParams(created_before=CUTOFF))
+
+    assert "createdOn >=" not in sql
+
+
 def test_iter_slice_rows_rejects_a_missing_file(tmp_path):
     with pytest.raises(FileNotFoundError):
         list(iter_slice_rows(tmp_path / "missing.db", SliceParams(created_before=CUTOFF)))

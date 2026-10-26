@@ -246,6 +246,21 @@ def test_add_metrics_sums_measured_values_and_keeps_unmeasured_ones_null():
     assert first == RunMetrics(rows_in=1)
 
 
+def test_discovery_metrics_round_trip(db):
+    handle = register(db)
+    metrics = RunMetrics(
+        discovered_new=4,
+        discovered_rename_or_move=3,
+        discovered_duplicate=2,
+        discovered_uncertain=1,
+    )
+
+    with db.transaction():
+        write_metrics(db, handle.run_id, metrics)
+
+    assert read_metrics(db, handle.run_id) == metrics
+
+
 def test_new_fetch_outcome_metrics_round_trip(db):
     handle = register(db)
     metrics = RunMetrics(rows_in=5, rows_not_modified=2, rows_failed=1, rows_skipped=1)

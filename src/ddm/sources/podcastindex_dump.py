@@ -62,25 +62,34 @@ TIME_FIELDS = {
 @dataclass(frozen=True)
 class SliceParams:
     created_before: date
+    # Lower bound for discovery windows; None reads everything before created_before.
+    created_from: date | None = None
     categories: tuple[str, ...] = DEMO_CATEGORIES
     min_episodes: int = MIN_EPISODES
     language_prefix: str = LANGUAGE_PREFIX
+
+
+def _epoch(day: date) -> int:
+    return int(datetime.combine(day, time(), UTC).timestamp())
 
 
 def slice_query(params: SliceParams) -> tuple[str, tuple[Any, ...]]:
     columns = ", ".join(f"lower({column})" for column in CATEGORY_COLUMNS)
     category_filter = " OR ".join(f"lower(?) IN ({columns})" for _ in params.categories)
     # Only column names (module constants) are interpolated; every value is a parameter.
+    lower_bound = "AND createdOn >= ?" if params.created_from is not None else ""
     sql = f"""
         SELECT * FROM podcasts
         WHERE lower(language) LIKE ? || '%'
           AND episodeCount >= ?
-          AND createdOn < ?
+          AND createdOn < ? {lower_bound}
           AND ({category_filter})
         ORDER BY id
     """  # noqa: S608
-    cutoff = int(datetime.combine(params.created_before, time(), UTC).timestamp())
-    values = (params.language_prefix, params.min_episodes, cutoff, *params.categories)
+    window = [_epoch(params.created_before)]
+    if params.created_from is not None:
+        window.append(_epoch(params.created_from))
+    values = (params.language_prefix, params.min_episodes, *window, *params.categories)
     return sql, values
 
 
@@ -103,21 +112,23 @@ def iter_slice_rows(db_path: Path, params: SliceParams) -> Iterator[dict[str, An
         conn.close()
 
 
-def _text(value: Any) -> str | None:
+def clean_text(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
-    # PostgreSQL text and jsonb cannot hold NUL characters.
-    return value.replace("\x00", "").strip() or None
+    # PostgreSQL text and jsonb cannot hold NUL characters or lone surrogates (JSON from an
+    # API can carry both; the dump's decoder already replaces invalid bytes).
+    text = value.replace("\x00", "").encode("utf-8", "replace").decode("utf-8")
+    return text.strip() or None
 
 
-def _positive_int(value: Any) -> int | None:
+def positive_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value if value > 0 else None
 
 
-def _timestamp(value: Any) -> datetime | None:
-    seconds = _positive_int(value)
+def unix_time(value: Any) -> datetime | None:
+    seconds = positive_int(value)
     if seconds is None:
         return None
     try:
@@ -144,7 +155,7 @@ def _reject(row_number: int, source_key: str | None, reason: str, row: Mapping[s
 def _categories(row: Mapping[str, Any]) -> list[str]:
     seen: dict[str, None] = {}
     for column in CATEGORY_COLUMNS:
-        value = _text(row.get(column))
+        value = clean_text(row.get(column))
         if value:
             seen.setdefault(value.lower(), None)
     return list(seen)
@@ -153,17 +164,17 @@ def _categories(row: Mapping[str, Any]) -> list[str]:
 def _scalar_attrs(row: Mapping[str, Any]) -> dict[str, Any]:
     attrs: dict[str, Any] = {}
     for column, key in TEXT_FIELDS.items():
-        if (value := _text(row.get(column))) is not None:
+        if (value := clean_text(row.get(column))) is not None:
             attrs[key] = value
     for column, key in INTEGER_FIELDS.items():
         value = row.get(column)
         if isinstance(value, int) and not isinstance(value, bool):
             attrs[key] = value
     for column, key in POSITIVE_INTEGER_FIELDS.items():
-        if (number := _positive_int(row.get(column))) is not None:
+        if (number := positive_int(row.get(column))) is not None:
             attrs[key] = number
     for column, key in TIME_FIELDS.items():
-        if (moment := _timestamp(row.get(column))) is not None:
+        if (moment := unix_time(row.get(column))) is not None:
             attrs[key] = moment.isoformat()
     return attrs
 
@@ -171,19 +182,19 @@ def _scalar_attrs(row: Mapping[str, Any]) -> dict[str, Any]:
 def _attrs(row: Mapping[str, Any], feed_url: str) -> dict[str, Any]:
     attrs = {"feed_url": feed_url, **_scalar_attrs(row)}
     # The export cannot tell "not explicit" from "not declared", so only a 1 is recorded.
-    if _positive_int(row.get("explicit")) is not None:
+    if positive_int(row.get("explicit")) is not None:
         attrs["explicit"] = True
-    if (language := _text(row.get("language"))) is not None:
+    if (language := clean_text(row.get("language"))) is not None:
         attrs["language"] = language.lower()
-    if (original_url := _text(row.get("originalUrl"))) is not None:
+    if (original_url := clean_text(row.get("originalUrl"))) is not None:
         attrs["original_url"] = original_url
-    if (itunes_id := _positive_int(row.get("itunesId"))) is not None:
+    if (itunes_id := positive_int(row.get("itunesId"))) is not None:
         attrs["itunes_id"] = itunes_id
-    if (guid := normalize_guid(_text(row.get("podcastGuid")))) is not None:
+    if (guid := normalize_guid(clean_text(row.get("podcastGuid")))) is not None:
         attrs["podcast_guid"] = guid
     if categories := _categories(row):
         attrs["categories"] = categories
-    if (duplicate_of := _positive_int(row.get("duplicateOf"))) is not None:
+    if (duplicate_of := positive_int(row.get("duplicateOf"))) is not None:
         attrs["duplicate_of_podcastindex_id"] = duplicate_of
     return attrs
 
@@ -193,11 +204,11 @@ def _identifiers(
 ) -> tuple[tuple[str, str], ...]:
     """Strong identifiers in lookup order, without repeats."""
     candidates = (
-        ("podcast_guid", normalize_guid(_text(row.get("podcastGuid")))),
+        ("podcast_guid", normalize_guid(clean_text(row.get("podcastGuid")))),
         ("itunes_id", normalize_itunes_id(row.get("itunesId"))),
         ("podcastindex_id", source_key),
         ("feed_url", feed_url_id),
-        ("feed_url", normalize_feed_url(_text(row.get("originalUrl")))),
+        ("feed_url", normalize_feed_url(clean_text(row.get("originalUrl")))),
     )
     unique: dict[tuple[str, str], None] = {}
     for kind, value in candidates:
@@ -207,20 +218,20 @@ def _identifiers(
 
 
 def normalize_dump_row(row_number: int, row: Mapping[str, Any]) -> NormalizedRecord | Reject:
-    row_id = _positive_int(row.get("id"))
+    row_id = positive_int(row.get("id"))
     if row_id is None:
         return _reject(row_number, None, "invalid_id", row)
     source_key = str(row_id)
-    feed_url = _text(row.get("url"))
+    feed_url = clean_text(row.get("url"))
     feed_url_id = normalize_feed_url(feed_url)
     if feed_url is None or feed_url_id is None:
         return _reject(row_number, source_key, "invalid_feed_url", row)
     try:
         return make_record(
             source_key=source_key,
-            display_name=_text(row.get("title")),
+            display_name=clean_text(row.get("title")),
             attrs=_attrs(row, feed_url),
-            source_updated_at=_timestamp(row.get("lastUpdate")),
+            source_updated_at=unix_time(row.get("lastUpdate")),
             identifiers=_identifiers(row, source_key, feed_url_id),
         )
     except (ValueError, TypeError, OverflowError):
