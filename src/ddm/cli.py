@@ -16,7 +16,13 @@ from urllib.parse import urlsplit
 
 import psycopg
 
-from ddm.config import NEON_POOLER_SUFFIX, ConfigError, load_database_url, load_user_agent
+from ddm.config import (
+    NEON_POOLER_SUFFIX,
+    ConfigError,
+    load_database_url,
+    load_refused_backoff,
+    load_user_agent,
+)
 from ddm.db.migrate import MigrationError, discover, migrate
 from ddm.ingest.baseline import BASELINE_CUTOFF, ImportReport, import_baseline
 from ddm.ingest.fetch_log import RefreshInputError
@@ -27,7 +33,7 @@ from ddm.ingest.refresh import (
     RefreshReport,
     refresh_podcasts,
 )
-from ddm.sources.rss_fetch import FeedFetcher
+from ddm.sources.rss_fetch import REFUSED_BACKOFF, FeedFetcher
 
 logger = logging.getLogger(__name__)
 
@@ -141,9 +147,13 @@ def _format_refresh(report: RefreshReport) -> str:
 
 def _run_refresh(url: str, limit: int, same_as: int | None) -> None:
     user_agent = load_user_agent()
+    refused_backoff = load_refused_backoff(REFUSED_BACKOFF)
     if not 1 <= limit <= MAX_LIMIT:
         raise RefreshInputError(f"--limit must be between 1 and {MAX_LIMIT}")
-    with _connect(url) as conn, FeedFetcher(user_agent) as fetcher:
+    with (
+        FeedFetcher(user_agent, refused_backoff=refused_backoff) as fetcher,
+        _connect(url) as conn,
+    ):
         report = refresh_podcasts(conn, fetcher, limit=limit, same_as=same_as)
     print(_format_refresh(report))
 

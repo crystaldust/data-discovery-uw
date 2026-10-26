@@ -47,7 +47,8 @@ MIN_HOST_INTERVAL_SECONDS = 1.0
 DEFAULT_MAX_ATTEMPTS = 2
 DEFAULT_RETRY_WAIT_SECONDS = 2.0
 RATE_LIMIT_BACKOFF = timedelta(days=1)
-# A 401/403 without Retry-After is taken to last; the feed is not asked again for a month.
+# A 401/403 without Retry-After is taken to last; the feed is not asked again for a month
+# unless DDM_REFUSED_BACKOFF_DAYS says otherwise.
 REFUSED_BACKOFF = timedelta(days=30)
 MAX_RETRY_AFTER = timedelta(days=30)
 PERMANENT_REDIRECTS = frozenset({301, 308})
@@ -231,6 +232,7 @@ class FeedFetcher:
         retry_wait_seconds: float = DEFAULT_RETRY_WAIT_SECONDS,
         max_body_bytes: int = MAX_BODY_BYTES,
         max_request_seconds: float = MAX_REQUEST_SECONDS,
+        refused_backoff: timedelta = REFUSED_BACKOFF,
     ):
         self._user_agent = user_agent
         self._resolve_host = resolve_host
@@ -242,6 +244,7 @@ class FeedFetcher:
         self._retry_wait_seconds = retry_wait_seconds
         self._max_body_bytes = max_body_bytes
         self._max_request_seconds = max_request_seconds
+        self._refused_backoff = refused_backoff
         self._hosts = _HostState()
         self._http = httpx.Client(
             timeout=httpx.Timeout(READ_TIMEOUT_SECONDS, connect=CONNECT_TIMEOUT_SECONDS),
@@ -342,7 +345,7 @@ class FeedFetcher:
         now = self._wall_clock()
         retry_after = _parse_retry_after(headers.get("Retry-After"), now)
         if retry_after is None:
-            retry_after = now + (RATE_LIMIT_BACKOFF if status == 429 else REFUSED_BACKOFF)
+            retry_after = now + (RATE_LIMIT_BACKOFF if status == 429 else self._refused_backoff)
         self._hosts.refused[host] = retry_after
         logger.warning(
             "rss host refused host=%s status=%d; no more requests this run", host, status

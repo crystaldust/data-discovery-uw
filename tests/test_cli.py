@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -146,6 +146,36 @@ def test_refresh_limit_out_of_range_fails_before_connecting(monkeypatch, capsys)
     assert "limit" in capsys.readouterr().err
 
 
+def test_refresh_with_an_invalid_backoff_fails_naming_the_variable(monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", SECRET_URL)
+    monkeypatch.setenv("DDM_USER_AGENT", HONEST_UA)
+    monkeypatch.setenv("DDM_REFUSED_BACKOFF_DAYS", "0")
+
+    assert main(["refresh-podcasts"]) == 1
+
+    err = capsys.readouterr().err
+    assert "DDM_REFUSED_BACKOFF_DAYS" in err
+    assert "hunter2" not in err
+
+
+def test_refresh_passes_the_configured_backoff_to_the_fetcher(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", SECRET_URL)
+    monkeypatch.setenv("DDM_USER_AGENT", HONEST_UA)
+    monkeypatch.setenv("DDM_REFUSED_BACKOFF_DAYS", "3")
+    seen = {}
+
+    def fake_fetcher(user_agent, **kwargs):
+        seen.update(kwargs)
+        raise RuntimeError("stop before connecting")
+
+    monkeypatch.setattr("ddm.cli.FeedFetcher", fake_fetcher)
+
+    with pytest.raises(RuntimeError, match="stop before connecting"):
+        main(["refresh-podcasts"])
+
+    assert seen == {"refused_backoff": timedelta(days=3)}
+
+
 @pytest.mark.integration
 def test_refresh_twice_reports_counts_and_no_new_observations(
     monkeypatch, capsys, fresh_db, pg_url, tmp_path
@@ -153,7 +183,7 @@ def test_refresh_twice_reports_counts_and_no_new_observations(
     monkeypatch.setenv("DATABASE_URL", pg_url)
     monkeypatch.setenv("DDM_USER_AGENT", HONEST_UA)
     feeds = {f"https://feeds.example.com/{k}.xml": rss(f"Show {k}") for k in (1, 2)}
-    monkeypatch.setattr("ddm.cli.FeedFetcher", lambda user_agent: FakeFetcher(feeds))
+    monkeypatch.setattr("ddm.cli.FeedFetcher", lambda user_agent, **_: FakeFetcher(feeds))
     assert main(["migrate"]) == 0
     assert (
         main(["import-baseline", "--dump", str(make_dump(tmp_path, [dump_row(1), dump_row(2)]))])
