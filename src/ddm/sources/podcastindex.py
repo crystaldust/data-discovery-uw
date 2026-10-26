@@ -46,6 +46,11 @@ class SourceUnavailable(RuntimeError):
     """The source kept failing with network errors or 5xx responses."""
 
 
+class SourceResponseError(RuntimeError):
+    """The source answered, but not usefully: a 4xx other than a refusal, or a body that is
+    not a JSON object. Retrying the same request would get the same answer."""
+
+
 class _RetryableError(Exception):
     pass
 
@@ -80,8 +85,14 @@ class PodcastIndexClient:
         self._retry_wait_seconds = retry_wait_seconds
         self._min_interval_seconds = min_interval_seconds
         self._last_request_at: float | None = None
+        # No proxies (an employer requirement, and the key must not pass through one) and
+        # no redirects: the API has no reason to send us anywhere else.
         self._http = httpx.Client(
-            base_url=BASE_URL, timeout=DEFAULT_TIMEOUT_SECONDS, transport=transport
+            base_url=BASE_URL,
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+            transport=transport,
+            trust_env=False,
+            follow_redirects=False,
         )
 
     def __enter__(self) -> Self:
@@ -123,8 +134,15 @@ class PodcastIndexClient:
             )
         if response.status_code >= 500:
             raise _RetryableError(f"status={response.status_code}")
-        response.raise_for_status()
-        return response.json()
+        if response.status_code >= 300:
+            raise SourceResponseError(f"status={response.status_code} path={path}")
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise SourceResponseError(f"body is not JSON path={path}") from exc
+        if not isinstance(body, dict):
+            raise SourceResponseError(f"body is not a JSON object path={path}")
+        return body
 
     def _respect_min_interval(self) -> None:
         if self._last_request_at is not None and self._min_interval_seconds > 0:

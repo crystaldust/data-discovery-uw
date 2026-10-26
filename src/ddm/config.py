@@ -1,7 +1,7 @@
 """Configuration loaded from environment variables and validated at startup."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from urllib.parse import urlsplit, urlunsplit
 
@@ -19,8 +19,9 @@ class ConfigError(RuntimeError):
 
 @dataclass(frozen=True)
 class PodcastIndexConfig:
-    api_key: str
-    api_secret: str
+    # Kept out of repr so a traceback or a debug print cannot show them.
+    api_key: str = field(repr=False)
+    api_secret: str = field(repr=False)
     user_agent: str
 
 
@@ -35,7 +36,7 @@ def load_podcastindex_config() -> PodcastIndexConfig:
     return PodcastIndexConfig(
         api_key=_require("PODCASTINDEX_API_KEY"),
         api_secret=_require("PODCASTINDEX_API_SECRET"),
-        user_agent=_require("DDM_USER_AGENT"),
+        user_agent=load_user_agent(),
     )
 
 

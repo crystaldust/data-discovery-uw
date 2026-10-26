@@ -1,0 +1,50 @@
+{
+  "seed": "ddm-phase-4",
+  "strata": {
+    "fuzzy_0.0": {
+      "population": 11120,
+      "sampled": 15
+    },
+    "fuzzy_0.3": {
+      "population": 5097,
+      "sampled": 15
+    },
+    "fuzzy_0.4": {
+      "population": 1379,
+      "sampled": 14
+    },
+    "fuzzy_0.5": {
+      "population": 631,
+      "sampled": 14
+    },
+    "fuzzy_0.6": {
+      "population": 76,
+      "sampled": 14
+    },
+    "fuzzy_0.7": {
+      "population": 87,
+      "sampled": 14
+    },
+    "fuzzy_0.8": {
+      "population": 499,
+      "sampled": 14
+    },
+    "strong_conflict": {
+      "population": 116,
+      "sampled": 10
+    },
+    "strong_diff_title": {
+      "population": 2,
+      "sampled": 2
+    },
+    "strong_same_title": {
+      "population": 644,
+      "sampled": 50
+    },
+    "unconfirmed_guid": {
+      "population": 64,
+      "sampled": 10
+    }
+  },
+  "threshold": 0.6
+}

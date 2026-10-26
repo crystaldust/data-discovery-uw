@@ -49,6 +49,10 @@ class RunMetrics:
     rows_not_modified: int | None = None
     rows_failed: int | None = None
     rows_skipped: int | None = None
+    discovered_new: int | None = None
+    discovered_rename_or_move: int | None = None
+    discovered_duplicate: int | None = None
+    discovered_uncertain: int | None = None
 
 
 METRIC_COLUMNS = tuple(f.name for f in fields(RunMetrics))

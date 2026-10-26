@@ -20,6 +20,9 @@ EXPECTED_TABLES = {
     "feed_fetch_state",
     "fetch_attempts",
     "contact_routes",
+    "discoveries",
+    "discovery_cursors",
+    "source_backoff",
 }
 
 
@@ -34,6 +37,7 @@ def test_discover_returns_bundled_migrations_in_version_order():
         (1, "extensions_and_runs"),
         (2, "records_and_entities"),
         (3, "podcast_refresh"),
+        (4, "discovery"),
     ]
     assert all(len(m.checksum) == 64 for m in migrations)
 
@@ -70,7 +74,7 @@ def test_migrate_creates_every_table_on_an_empty_database(fresh_db):
             "select tablename from pg_tables where schemaname = 'public'"
         ).fetchall()
     }
-    assert [m.version for m in applied] == [1, 2, 3]
+    assert [m.version for m in applied] == [1, 2, 3, 4]
     assert tables == EXPECTED_TABLES
 
 
@@ -279,3 +283,137 @@ def test_migrations_give_up_quickly_when_a_table_is_locked(fresh_db, pg_url, tmp
         holder.execute("lock table t1 in access exclusive mode")
         with pytest.raises(psycopg.errors.LockNotAvailable):
             migrate(fresh_db, discover(tmp_path))
+
+
+def _discovery_fixture(conn, fingerprint="fp"):
+    """A discovery run with two entities, for constraint tests."""
+    with conn.transaction():
+        run_id = conn.execute(
+            """insert into import_runs
+                 (source_id, run_kind, input_fingerprint, is_complete_snapshot)
+               values (1, 'discovery', %s, false) returning run_id""",
+            (fingerprint,),
+        ).fetchone()[0]
+        a, b = (
+            conn.execute(
+                """insert into entities (entity_id, entity_type, first_seen_kind, first_seen_run)
+                   values (gen_random_uuid(), 'podcast', 'discovered', %s) returning entity_id""",
+                (run_id,),
+            ).fetchone()[0]
+            for _ in range(2)
+        )
+    return run_id, a, b
+
+
+@pytest.mark.integration
+def test_podcastindex_api_source_is_seeded(fresh_db):
+    migrate(fresh_db)
+
+    row = fresh_db.execute(
+        "select source_id from sources where name = 'podcastindex_api'"
+    ).fetchone()
+
+    assert row == (3,)
+
+
+@pytest.mark.integration
+def test_entities_accept_discovered_but_no_other_new_kind(fresh_db):
+    migrate(fresh_db)
+    run_id, _, _ = _discovery_fixture(fresh_db)
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        fresh_db.execute(
+            """insert into entities (entity_id, entity_type, first_seen_kind, first_seen_run)
+               values (gen_random_uuid(), 'podcast', 'other', %s)""",
+            (run_id,),
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("classification", "entity", "matched"),
+    [
+        ("new", "a", "b"),  # a new entity matches nothing
+        ("uncertain", "a", None),  # an uncertain record names its suspect
+        ("duplicate", "a", "b"),  # an attached record shares the matched entity
+        ("uncertain", "a", "a"),  # an uncertain record got its own entity
+    ],
+)
+def test_discoveries_enforce_how_classification_and_entities_relate(
+    fresh_db, classification, entity, matched
+):
+    migrate(fresh_db)
+    run_id, a, b = _discovery_fixture(fresh_db)
+    ids = {"a": a, "b": b, None: None}
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        fresh_db.execute(
+            """insert into discoveries
+                 (run_id, source_id, source_key, classification, entity_id, matched_entity_id,
+                  method, evidence, classifier_version)
+               values (%s, 1, '1', %s, %s, %s, 'm', '{}', 1)""",
+            (run_id, classification, ids[entity], ids[matched]),
+        )
+
+
+@pytest.mark.integration
+def test_discovery_cursor_must_be_a_positive_feed_id(fresh_db):
+    migrate(fresh_db)
+    run_id, _, _ = _discovery_fixture(fresh_db)
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        fresh_db.execute(
+            "insert into discovery_cursors (source_id, last_feed_id, updated_run)"
+            " values (3, 0, %s)",
+            (run_id,),
+        )
+
+
+@pytest.mark.integration
+def test_entity_names_have_a_gist_index_for_nearest_neighbour_search(fresh_db):
+    migrate(fresh_db)
+
+    row = fresh_db.execute(
+        "select indexdef from pg_indexes where indexname = 'entities_norm_name_gist'"
+    ).fetchone()
+
+    assert row is not None and "gist_trgm_ops" in row[0]
+
+
+@pytest.mark.integration
+def test_a_record_can_be_classified_only_once(fresh_db):
+    migrate(fresh_db)
+    run_id, a, _ = _discovery_fixture(fresh_db)
+    insert = """insert into discoveries
+        (run_id, source_id, source_key, classification, entity_id, method, evidence,
+         classifier_version)
+        values (%s, 1, '1', 'new', %s, 'm', '{}', 1)"""
+    fresh_db.execute(insert, (run_id, a))
+    other_run, _, _ = _discovery_fixture(fresh_db, fingerprint="fp2")
+
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        fresh_db.execute(insert, (other_run, a))
+
+
+@pytest.mark.integration
+def test_backoff_only_records_refusals(fresh_db):
+    migrate(fresh_db)
+    run_id, _, _ = _discovery_fixture(fresh_db)
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        fresh_db.execute(
+            "insert into source_backoff (source_id, retry_after, http_status, set_run)"
+            " values (3, now(), 500, %s)",
+            (run_id,),
+        )
+
+
+@pytest.mark.integration
+def test_the_unused_gin_name_index_is_gone(fresh_db):
+    migrate(fresh_db)
+
+    row = fresh_db.execute(
+        "select 1 from pg_indexes where indexname = 'entities_norm_name_trgm'"
+    ).fetchone()
+
+    assert row is None

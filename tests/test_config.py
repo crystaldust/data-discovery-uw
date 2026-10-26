@@ -198,3 +198,17 @@ def test_refused_backoff_out_of_range_or_not_a_whole_number_names_the_variable(m
 
     with pytest.raises(ConfigError, match="DDM_REFUSED_BACKOFF_DAYS"):
         load_refused_backoff(DEFAULT_BACKOFF)
+
+
+def test_podcastindex_config_refuses_a_browser_user_agent(full_env):
+    full_env.setenv("DDM_USER_AGENT", "Mozilla/5.0 (+mailto:a@example.com)")
+
+    with pytest.raises(ConfigError, match="honestly"):
+        load_podcastindex_config()
+
+
+def test_podcastindex_config_repr_hides_the_key_and_secret(full_env):
+    text = repr(load_podcastindex_config())
+
+    assert "secret-value" not in text
+    assert "key-value" not in text

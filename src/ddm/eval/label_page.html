@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="label-token" content="{{TOKEN}}">
+<title>Pair labelling</title>
+<style nonce="{{NONCE}}">
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #e3e2dd;
+    --accent: #2f5d8a; --match: #e5f2e6; --match-text: #1f5f2a; --differ: #fbf1e3;
+    --same: #2e7d32; --different: #b3261e; --unsure: #8a6d00; --chip: #eeede8;
+    --focus: #2f5d8a55;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --panel: #1f1f1d; --text: #ecebe6; --muted: #a3a29b; --line: #34332f;
+      --accent: #8fb8e0; --match: #1f3323; --match-text: #9fd6a6; --differ: #3a2f1f;
+      --same: #81c784; --different: #ef9a9a; --unsure: #e6c35c; --chip: #2b2a27;
+      --focus: #8fb8e055;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    position: sticky; top: 0; z-index: 2; background: var(--panel);
+    border-bottom: 1px solid var(--line); padding: 10px 16px;
+    display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header progress { width: 160px; height: 8px; accent-color: var(--accent); }
+  .counts { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .counts b { color: var(--text); font-weight: 600; }
+  header label { color: var(--muted); display: flex; gap: 6px; align-items: center; }
+  select, input[type=text] {
+    font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px;
+  }
+  main { max-width: 1180px; margin: 0 auto; padding: 16px 16px 140px; }
+  .pairhead { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; margin-bottom: 10px; }
+  .pairhead h2 { margin: 0; font-size: 20px; }
+  .chip { background: var(--chip); border-radius: 999px; padding: 2px 10px; font-size: 13px; color: var(--muted); }
+  .chip.done-same { color: var(--same); } .chip.done-different { color: var(--different); }
+  .chip.done-unsure { color: var(--unsure); }
+  .system { font-size: 13px; color: var(--muted); margin: 0 0 10px; }
+  .system[hidden] { display: none; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; table-layout: fixed; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+  thead th { font-size: 13px; color: var(--muted); font-weight: 600; background: var(--bg); }
+  col.field { width: 130px; }
+  tbody th { color: var(--muted); font-weight: 500; font-size: 13px; }
+  tr.match td { background: var(--match); }
+  tr.match th::after { content: " ✓"; color: var(--match-text); }
+  tr.differ td { background: var(--differ); }
+  tr.title td { font-size: 17px; font-weight: 600; }
+  .shared { text-decoration: underline; text-decoration-color: var(--match-text); text-underline-offset: 3px; }
+  .empty { color: var(--muted); font-style: italic; }
+  td.desc { font-size: 13px; color: var(--muted); }
+  td a { color: var(--accent); }
+  .links a { margin-right: 12px; white-space: nowrap; }
+  footer {
+    position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel);
+    border-top: 1px solid var(--line); padding: 10px 16px;
+  }
+  .actions { max-width: 1180px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button {
+    font: inherit; border: 1px solid var(--line); background: var(--bg); color: var(--text);
+    border-radius: 8px; padding: 8px 14px; cursor: pointer;
+  }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; }
+  button kbd { font: 12px ui-monospace, monospace; color: var(--muted); margin-left: 6px; }
+  button.same { border-color: var(--same); color: var(--same); }
+  button.different { border-color: var(--different); color: var(--different); }
+  button.unsure { border-color: var(--unsure); color: var(--unsure); }
+  button.active { font-weight: 700; box-shadow: inset 0 0 0 2px currentColor; }
+  #note { flex: 1 1 240px; min-width: 0; }
+  #status { color: var(--muted); font-size: 13px; min-width: 90px; }
+  #status.error { color: var(--different); }
+  .help { max-width: 1180px; margin: 6px auto 0; color: var(--muted); font-size: 12px; }
+  .done-banner { padding: 24px; text-align: center; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  @media (max-width: 720px) {
+    col.field { width: 88px; }
+    header progress { width: 100px; }
+    main { padding-bottom: 210px; }
+    .help { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pair labelling</h1>
+  <progress id="progress" max="1" value="0"></progress>
+  <span class="counts" id="counts"></span>
+  <label>Show <select id="filter"></select></label>
+  <label><input type="checkbox" id="system-toggle"> System's view</label>
+</header>
+<main id="main"><p class="empty">Loading…</p></main>
+<footer>
+  <div class="actions">
+    <button class="same" data-label="same">Same<kbd>1</kbd></button>
+    <button class="different" data-label="different">Different<kbd>2</kbd></button>
+    <button class="unsure" data-label="unsure">Unsure<kbd>3</kbd></button>
+    <button data-label="">Clear<kbd>0</kbd></button>
+    <input type="text" id="note" maxlength="300" placeholder="Note (why unsure, what decided it)" aria-label="Note">
+    <button id="prev" title="Previous pair">←<kbd>K</kbd></button>
+    <button id="next" title="Next pair">→<kbd>J</kbd></button>
+    <span id="status" role="status" aria-live="polite"></span>
+  </div>
+  <p class="help">Same = the same podcast (renamed, moved or mirrored). Different = another show, even from the same publisher. Unsure = cannot tell; say why in the note. Press N to write a note, Esc to leave it.</p>
+</footer>
+<script nonce="{{NONCE}}">
+"use strict";
+const TOKEN = document.querySelector('meta[name="label-token"]').content;
+const FIELDS = [
+  ["title", "Title"], ["author", "Author"], ["owner", "Owner"], ["website", "Website"],
+  ["feed_url", "Feed address"], ["itunes_id", "Apple ID"], ["pi_id", "Podcast Index id"],
+  ["newest_item", "Newest episode"], ["description", "Description"],
+];
+const SYSTEM = ["stratum", "right_class", "method", "score", "title_sim", "author_sim", "site_match"];
+const state = { rows: [], filter: "unlabelled", index: 0, showSystem: false };
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v; else node.setAttribute(k, v);
+  }
+  for (const child of children) {
+    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+function norm(text) { return (text || "").toLowerCase().replace(/\s+/g, " ").trim(); }
+function urlKey(text) {
+  try { const u = new URL(text); return (u.host.replace(/^www\./, "") + u.pathname).replace(/\/$/, "").toLowerCase(); }
+  catch { return norm(text); }
+}
+function safeUrl(text) {
+  try { const u = new URL(text); return ["http:", "https:"].includes(u.protocol) ? u.href : null; }
+  catch { return null; }
+}
+function digits(text) { return /^\d+$/.test(text || "") ? text : null; }
+function link(href, label) {
+  return el("a", { href, target: "_blank", rel: "noopener noreferrer" }, label);
+}
+function storage(key, value) {
+  try { if (value === undefined) return localStorage.getItem(key); localStorage.setItem(key, value); }
+  catch { return null; }
+}
+
+function visibleRows() {
+  const f = state.filter;
+  return state.rows.filter(r => f === "all" ? true : f === "unlabelled" ? !r.label : r.stratum === f);
+}
+function current() { return visibleRows()[state.index]; }
+
+// Words too common in podcast titles to say anything when both sides share them.
+const STOP = new Set(["the", "and", "for", "with", "from", "your", "our", "podcast", "show"]);
+function words(text) {
+  return new Set(norm(text).split(/[^\p{L}\p{N}]+/u).filter(w => w.length > 2 && !STOP.has(w)));
+}
+function highlighted(text, other) {
+  if (!text) return el("span", { class: "empty" }, "—");
+  const shared = words(other);
+  const span = el("span");
+  for (const part of text.split(/(\s+)/)) {
+    const key = norm(part).replace(/[^\p{L}\p{N}]+/gu, "");
+    span.append(key.length > 2 && shared.has(key) ? el("span", { class: "shared" }, part) : part);
+  }
+  return span;
+}
+function compare(key, a, b) {
+  if (!a && !b) return "";
+  if (!a || !b) return "differ";
+  const same = ["website", "feed_url"].includes(key) ? urlKey(a) === urlKey(b) : norm(a) === norm(b);
+  return same ? "match" : "differ";
+}
+function cell(key, value, other) {
+  if (key === "website" || key === "feed_url") {
+    const href = safeUrl(value);
+    return el("td", {}, href ? link(href, value) : (value ? value : el("span", { class: "empty" }, "—")));
+  }
+  if (key === "description") return el("td", { class: "desc" }, value || el("span", { class: "empty" }, "—"));
+  if (key === "title" || key === "author" || key === "owner") return el("td", {}, highlighted(value, other));
+  return el("td", {}, value || el("span", { class: "empty" }, "—"));
+}
+function sideLinks(row, side) {
+  const td = el("td", { class: "links" });
+  const pi = digits(row[`${side}_pi_id`]);
+  const apple = digits(row[`${side}_itunes_id`]);
+  if (pi) td.append(link(`https://podcastindex.org/podcast/${pi}`, "Podcast Index"));
+  if (apple) td.append(link(`https://podcasts.apple.com/podcast/id${apple}`, "Apple Podcasts"));
+  const site = safeUrl(row[`${side}_website`]);
+  if (site) td.append(link(site, "Website"));
+  return td;
+}
+
+function renderHeader() {
+  const total = state.rows.length;
+  const count = l => state.rows.filter(r => r.label === l).length;
+  const done = total - count("");
+  const progress = document.getElementById("progress");
+  progress.max = Math.max(total, 1); progress.value = done;
+  const counts = document.getElementById("counts");
+  counts.replaceChildren(
+    el("b", {}, `${done}/${total}`), " labelled · ",
+    `same ${count("same")} · different ${count("different")} · unsure ${count("unsure")}`,
+  );
+}
+function renderFilter() {
+  const select = document.getElementById("filter");
+  const strata = [...new Set(state.rows.map(r => r.stratum))];
+  const option = (value, text) => { const o = el("option", { value }, text); o.selected = value === state.filter; return o; };
+  select.replaceChildren(option("unlabelled", "Unlabelled"), option("all", "All pairs"),
+    ...strata.map(s => option(s, `${s} (${state.rows.filter(r => r.stratum === s).length})`)));
+}
+function renderPair() {
+  const main = document.getElementById("main");
+  const rows = visibleRows();
+  state.index = Math.min(state.index, Math.max(rows.length - 1, 0));
+  const row = rows[state.index];
+  document.querySelectorAll("button[data-label]").forEach(b => b.classList.toggle("active", !!row && b.dataset.label === row.label && row.label !== ""));
+  if (!row) {
+    main.replaceChildren(el("div", { class: "done-banner" },
+      state.filter === "unlabelled" ? "Every pair is labelled. Run `uv run ddm eval-report` to build the report." : "No pairs in this view."));
+    document.getElementById("note").value = "";
+    return;
+  }
+  const chip = el("span", { class: `chip ${row.label ? "done-" + row.label : ""}` }, row.label || "not labelled");
+  const head = el("div", { class: "pairhead" },
+    el("h2", {}, `Pair ${row.pair_id}`), el("span", { class: "chip" }, `${state.index + 1} of ${rows.length} in view`), chip);
+  const system = el("p", { class: "system" },
+    "System's view: " + SYSTEM.map(k => `${k} ${row[k] || "—"}`).join(" · "));
+  system.hidden = !state.showSystem;
+  const tbody = el("tbody");
+  for (const [key, label] of FIELDS) {
+    const a = row[`left_${key}`], b = row[`right_${key}`];
+    const cls = [compare(key, a, b), key === "title" ? "title" : ""].join(" ").trim();
+    tbody.append(el("tr", cls ? { class: cls } : {}, el("th", { scope: "row" }, label), cell(key, a, b), cell(key, b, a)));
+  }
+  tbody.append(el("tr", {}, el("th", { scope: "row" }, "Check"), sideLinks(row, "left"), sideLinks(row, "right")));
+  const columns = el("colgroup", {}, el("col", { class: "field" }), el("col"), el("col"));
+  const table = el("table", {}, columns,
+    el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Existing entity (first record)"), el("th", {}, "Record being judged"))),
+    tbody);
+  main.replaceChildren(head, system, table);
+  document.getElementById("note").value = row.note || "";
+}
+function render() { renderHeader(); renderPair(); }
+
+function setStatus(text, error = false) {
+  const status = document.getElementById("status");
+  status.textContent = text; status.classList.toggle("error", error);
+}
+async function save(row, label, note) {
+  setStatus("Saving…");
+  const response = await fetch("/api/label", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Label-Token": TOKEN },
+    body: JSON.stringify({ pair_id: row.pair_id, label, note }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) { setStatus(payload.error || `Save failed (${response.status})`, true); return false; }
+  Object.assign(row, payload.row);
+  setStatus("Saved ✓");
+  return true;
+}
+async function applyLabel(label) {
+  const row = current();
+  if (!row) return;
+  const wasUnlabelledView = state.filter === "unlabelled";
+  if (!(await save(row, label, document.getElementById("note").value))) return;
+  if (label && !wasUnlabelledView) {
+    const rows = visibleRows();
+    const next = rows.findIndex((r, i) => i > state.index && !r.label);
+    if (next >= 0) state.index = next; else if (state.index < rows.length - 1) state.index += 1;
+  }
+  renderFilter(); render();
+}
+async function saveNote() {
+  const row = current();
+  const note = document.getElementById("note").value;
+  if (row && note !== (row.note || "")) { await save(row, row.label, note); renderHeader(); }
+}
+function move(step) {
+  const rows = visibleRows();
+  state.index = Math.min(Math.max(state.index + step, 0), Math.max(rows.length - 1, 0));
+  renderPair(); setStatus("");
+}
+
+document.querySelectorAll("button[data-label]").forEach(b => b.addEventListener("click", () => applyLabel(b.dataset.label)));
+document.getElementById("prev").addEventListener("click", () => move(-1));
+document.getElementById("next").addEventListener("click", () => move(1));
+document.getElementById("note").addEventListener("blur", saveNote);
+document.getElementById("filter").addEventListener("change", e => {
+  state.filter = e.target.value; state.index = 0; storage("label-filter", state.filter); render();
+});
+document.getElementById("system-toggle").addEventListener("change", e => {
+  state.showSystem = e.target.checked; storage("label-system", state.showSystem ? "1" : "0"); renderPair();
+});
+document.addEventListener("keydown", e => {
+  const typing = e.target instanceof HTMLInputElement && e.target.type === "text";
+  if (typing) { if (e.key === "Escape" || e.key === "Enter") e.target.blur(); return; }
+  if (e.target instanceof HTMLSelectElement || e.metaKey || e.ctrlKey || e.altKey) return;
+  const keys = { "1": "same", "2": "different", "3": "unsure", "0": "" };
+  if (e.key in keys) { e.preventDefault(); applyLabel(keys[e.key]); }
+  else if (e.key === "ArrowRight" || e.key === "j") { e.preventDefault(); move(1); }
+  else if (e.key === "ArrowLeft" || e.key === "k") { e.preventDefault(); move(-1); }
+  else if (e.key === "n") { e.preventDefault(); document.getElementById("note").focus(); }
+});
+
+async function start() {
+  state.filter = storage("label-filter") || "unlabelled";
+  state.showSystem = storage("label-system") === "1";
+  document.getElementById("system-toggle").checked = state.showSystem;
+  const response = await fetch("/api/pairs", { headers: { "X-Label-Token": TOKEN } });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    document.getElementById("main").replaceChildren(el("p", { class: "empty" }, payload.error || "Could not load the pairs."));
+    return;
+  }
+  state.rows = payload.rows;
+  renderFilter(); render();
+}
+start();
+</script>
+</body>
+</html>

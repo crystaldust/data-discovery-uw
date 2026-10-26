@@ -35,7 +35,7 @@ def baseline_rows():
         dump_row(1, itunesId=900, podcastGuid="guid-a"),
         dump_row(2, itunesId=900),  # same Apple ID as 1 -> merged
         dump_row(3, podcastGuid="guid-c"),
-        dump_row(4, podcastGuid="guid-a"),  # guid of 1 -> merged
+        dump_row(4, podcastGuid="guid-a", title="Show 1"),  # guid and title of 1 -> merged
         dump_row(5, originalUrl=URL_OF_1, podcastGuid="guid-c"),  # hits 1 and 3 -> conflict
         dump_row(6, title="", originalUrl=MOVED_FROM_3),  # migrated from 3 -> merged
         dump_row(7, url=""),  # rejected

@@ -1,0 +1,44 @@
+{
+  "status": "true",
+  "query": {
+    "id": "8087486"
+  },
+  "feed": {
+    "id": 8087486,
+    "podcastGuid": "cc21ce02-c550-5400-aa8e-a6519f24aace",
+    "medium": "podcast",
+    "title": "Tumbas Abiertas",
+    "url": "https://anchor.fm/s/118d81b20/podcast/rss",
+    "originalUrl": "https://anchor.fm/s/118d81b20/podcast/rss",
+    "link": "https://podcasters.spotify.com/pod/show/lystra38",
+    "description": "Tumbas Abiertas es un podcast cristiano que explora los pasajes más sorprendentes, misteriosos y profundos de la Biblia a través de una narrativa envolvente, investigación bíblica y reflexión teológica. \nAquí, el misterio despierta la curiosidad, la Palabra ilumina el relato y Jesucristo permanece en el centro de cada historia.\nTumbas Abiertas. Hay acontecimientos que la muerte no pudo enterrar.\nUna producción Original de Lystra",
+    "author": "Lystra",
+    "ownerName": "Lystra",
+    "image": "https://d3t3ozftmdmh3i.cloudfront.net/staging/podcast_uploaded_nologo/47017832/47017832-1792517037423-732cc78e1d6ee.jpg",
+    "artwork": "https://d3t3ozftmdmh3i.cloudfront.net/staging/podcast_uploaded_nologo/47017832/47017832-1792517037423-732cc78e1d6ee.jpg",
+    "lastUpdateTime": 1792998717,
+    "lastCrawlTime": 1792998709,
+    "lastParseTime": 1792998731,
+    "lastGoodHttpStatusTime": 1792998709,
+    "lastHttpStatus": 200,
+    "contentType": "",
+    "itunesId": 6825066418,
+    "itunesType": "episodic",
+    "generator": "Anchor Podcasts",
+    "language": "es-mx",
+    "explicit": false,
+    "type": 0,
+    "dead": 0,
+    "chash": "3081d1485a5555f37394c2f8c08db71a",
+    "episodeCount": 1,
+    "crawlErrors": 0,
+    "parseErrors": 0,
+    "categories": {
+      "28": "History"
+    },
+    "locked": 0,
+    "imageUrlHash": 3605095880,
+    "feedId": 8087486
+  },
+  "description": "Found matching feeds."
+}

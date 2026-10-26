@@ -9,6 +9,7 @@ import argparse
 import logging
 import sqlite3
 import sys
+import webbrowser
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
@@ -20,11 +21,21 @@ from ddm.config import (
     NEON_POOLER_SUFFIX,
     ConfigError,
     load_database_url,
+    load_podcastindex_config,
     load_refused_backoff,
     load_user_agent,
 )
 from ddm.db.migrate import MigrationError, discover, migrate
+from ddm.eval.label_server import DEFAULT_PORT as LABEL_PORT
+from ddm.eval.label_server import make_server
+from ddm.eval.report import write_report
+from ddm.eval.sample import EvalInputError, write_sample
+from ddm.ingest.backoff import DiscoveryBackoff
 from ddm.ingest.baseline import BASELINE_CUTOFF, ImportReport, import_baseline
+from ddm.ingest.discover_dump import DiscoveryInputError, DiscoveryReport, discover_dump
+from ddm.ingest.discover_newfeeds import DEFAULT_LIMIT as NEWFEEDS_LIMIT
+from ddm.ingest.discover_newfeeds import MAX_LIMIT as NEWFEEDS_MAX
+from ddm.ingest.discover_newfeeds import DiscoveryBusy, NewfeedsReport, discover_newfeeds
 from ddm.ingest.fetch_log import RefreshInputError
 from ddm.ingest.refresh import (
     DEFAULT_LIMIT,
@@ -33,6 +44,7 @@ from ddm.ingest.refresh import (
     RefreshReport,
     refresh_podcasts,
 )
+from ddm.sources.podcastindex import PodcastIndexClient
 from ddm.sources.rss_fetch import REFUSED_BACKOFF, FeedFetcher
 
 logger = logging.getLogger(__name__)
@@ -42,6 +54,9 @@ KEEPALIVE_IDLE_SECONDS = 30
 BYTES_PER_MB = 1024 * 1024
 OUTCOMES = ("fetched", "not_modified", "rejected", "failed", "skipped")
 ACTIVITY = ("active", "dormant", "dead", "unknown")
+EVAL_DIR = Path("eval")
+# A run that stopped early (refused or source down): not a failure, not a success either.
+PARTIAL_EXIT = 3
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -67,6 +82,45 @@ def build_parser() -> argparse.ArgumentParser:
     refresh.add_argument(
         "--same-as", type=int, help="re-fetch exactly the feeds of this earlier refresh run"
     )
+    discover = commands.add_parser(
+        "discover-dump", help="classify feeds the dump added since the baseline cutoff"
+    )
+    discover.add_argument("--dump", type=Path, required=True, help="podcastindex_feeds.db path")
+    discover.add_argument(
+        "--created-from",
+        type=date.fromisoformat,
+        default=BASELINE_CUTOFF,
+        help="feeds created on or after this date (YYYY-MM-DD) are candidates",
+    )
+    newfeeds = commands.add_parser(
+        "discover-newfeeds", help="classify feeds Podcast Index added since the last run"
+    )
+    newfeeds.add_argument(
+        "--limit",
+        type=int,
+        default=NEWFEEDS_LIMIT,
+        help=f"English feeds to look up (1-{NEWFEEDS_MAX})",
+    )
+    sample = commands.add_parser("eval-sample", help="draw the pairs to label by hand")
+    sample.add_argument("--out", type=Path, default=EVAL_DIR / "labels.csv")
+    sample.add_argument("--strata", type=Path, default=EVAL_DIR / "strata.json")
+    sample.add_argument(
+        "--carry-from",
+        type=Path,
+        help="keep labels of pairs found in this earlier file (move it away from --out first)",
+    )
+    report = commands.add_parser(
+        "eval-report", help="build the accuracy report from the labels (no database needed)"
+    )
+    report.add_argument("--labels", type=Path, default=EVAL_DIR / "labels.csv")
+    report.add_argument("--strata", type=Path, default=EVAL_DIR / "strata.json")
+    report.add_argument("--out", type=Path, default=EVAL_DIR / "report.md")
+    label = commands.add_parser(
+        "label", help="open a local page to compare and label the sampled pairs"
+    )
+    label.add_argument("--labels", type=Path, default=EVAL_DIR / "labels.csv")
+    label.add_argument("--port", type=int, default=LABEL_PORT, help="local port (127.0.0.1)")
+    label.add_argument("--no-browser", action="store_true", help="only print the address")
     return parser
 
 
@@ -127,6 +181,105 @@ def _run_import_baseline(url: str, dump: Path, cutoff: date) -> None:
     print(_format_report(report))
 
 
+def _format_discovery(report: DiscoveryReport) -> str:
+    if report.skipped:
+        return (
+            f"run_id={report.run_id} status={report.status} "
+            "already discovered (same input fingerprint), nothing written"
+        )
+    m = report.metrics
+    return (
+        f"run_id={report.run_id} status={report.status} candidates={m.rows_in} "
+        f"rejected={m.rows_rejected}\n"
+        f"{_classified(m)}\n"
+        f"entities_created={m.entities_created} strong_id_merges={m.strong_id_merges} "
+        f"candidates_queued={m.candidates_created} "
+        f"ambiguous_identifiers={m.ambiguous_identifiers}\n"
+        f"db_size={(m.db_size_bytes or 0) / BYTES_PER_MB:.1f} MB "
+        f"duration={(m.duration_ms or 0) / 1000:.1f} s"
+    )
+
+
+def _run_discover_dump(url: str, dump: Path, created_from: date) -> None:
+    if not dump.is_file():
+        raise FileNotFoundError(f"dump not found: {dump}")
+    with _connect(url) as conn:
+        report = discover_dump(conn, dump, created_from)
+    print(_format_discovery(report))
+
+
+def _classified(m) -> str:
+    return (
+        f"classified new={m.discovered_new} rename_or_move={m.discovered_rename_or_move} "
+        f"duplicate={m.discovered_duplicate} uncertain={m.discovered_uncertain}"
+    )
+
+
+def _format_newfeeds(report: NewfeedsReport) -> str:
+    m = report.metrics
+    return (
+        f"run_id={report.run_id} status={report.status} stopped={report.stopped} "
+        f"cursor={report.cursor}\n"
+        f"looked_up={m.rows_in} skipped={m.rows_skipped} rejected={m.rows_rejected} "
+        f"api_requests={m.http_requests}\n"
+        f"{_classified(m)}\n"
+        f"db_size={(m.db_size_bytes or 0) / BYTES_PER_MB:.1f} MB "
+        f"duration={(m.duration_ms or 0) / 1000:.1f} s"
+    )
+
+
+def _run_discover_newfeeds(url: str, limit: int) -> int:
+    config = load_podcastindex_config()
+    refused_backoff = load_refused_backoff(REFUSED_BACKOFF)
+    if not 1 <= limit <= NEWFEEDS_MAX:
+        raise DiscoveryInputError(f"--limit must be between 1 and {NEWFEEDS_MAX}")
+    with PodcastIndexClient(config) as client, _connect(url) as conn:
+        report = discover_newfeeds(conn, client, limit=limit, refused_backoff=refused_backoff)
+    print(_format_newfeeds(report))
+    return 0 if report.status == "ok" else PARTIAL_EXIT
+
+
+def _run_eval_sample(url: str, out: Path, strata: Path, carry_from: Path | None) -> None:
+    with _connect(url) as conn:
+        result = write_sample(conn, out, strata, carry_from)
+    print(
+        f"pairs={result.pairs} carried_labels={result.carried} "
+        f"dropped_invalid_labels={result.dropped} labels={out} strata={strata}"
+    )
+
+
+def _run_eval_report(labels: Path, strata: Path, out: Path) -> None:
+    for path in (labels, strata):
+        if not path.is_file():
+            raise FileNotFoundError(f"not found: {path}")
+    if out.resolve() in (labels.resolve(), strata.resolve()):
+        raise EvalInputError(f"--out {out} would overwrite an input of the report")
+    write_report(labels, strata, out)
+    print(f"report={out}")
+
+
+def _run_label(labels: Path, port: int, open_browser: bool) -> None:
+    if not labels.is_file():
+        raise FileNotFoundError(f"not found: {labels}")
+    try:
+        server = make_server(labels, port=port)
+    except OSError as exc:
+        raise EvalInputError(f"cannot listen on 127.0.0.1:{port}; choose another --port") from exc
+    # Flushed: serve_forever blocks, and a piped stdout would otherwise never show the address.
+    print(
+        f"labelling page: {server.url}\nlabels are saved to {labels}; press Ctrl-C to stop",
+        flush=True,
+    )
+    if open_browser:
+        webbrowser.open(server.url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("stopped")
+    finally:
+        server.server_close()
+
+
 def _counts(prefix: str, names: Sequence[str], counts) -> str:
     return prefix + " ".join(f"{name}={counts.get(name, 0)}" for name in names)
 
@@ -162,14 +315,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     try:
+        if args.command == "eval-report":
+            # Reproducible by anyone from the two files alone, without a database.
+            _run_eval_report(args.labels, args.strata, args.out)
+            return 0
+        if args.command == "label":
+            _run_label(args.labels, args.port, not args.no_browser)
+            return 0
         url = load_database_url()
         if args.command == "migrate":
             _run_migrate(url)
         elif args.command == "import-baseline":
             _run_import_baseline(url, args.dump, args.cutoff)
+        elif args.command == "discover-dump":
+            _run_discover_dump(url, args.dump, args.created_from)
+        elif args.command == "discover-newfeeds":
+            return _run_discover_newfeeds(url, args.limit)
+        elif args.command == "eval-sample":
+            _run_eval_sample(url, args.out, args.strata, args.carry_from)
         else:
             _run_refresh(url, args.limit, args.same_as)
-    except (ConfigError, MigrationError, FileNotFoundError, RefreshBusy, RefreshInputError) as exc:
+    except (
+        ConfigError,
+        MigrationError,
+        FileNotFoundError,
+        RefreshBusy,
+        RefreshInputError,
+        DiscoveryInputError,
+        DiscoveryBusy,
+        DiscoveryBackoff,
+        EvalInputError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except (psycopg.Error, sqlite3.Error) as exc:

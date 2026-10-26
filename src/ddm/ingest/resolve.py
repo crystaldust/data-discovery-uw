@@ -5,7 +5,12 @@ Everything else is kept apart and queued for review, never merged automatically:
 - hits on two or more different entities;
 - a single hit whose entity already has a different podcast GUID or Apple ID;
 - identifier values carried by too many records to mean one entity (the real dump has a
-  podcast:guid shared by 320 unrelated feeds), which are not used for matching at all.
+  podcast:guid shared by 320 unrelated feeds), which are not used for matching at all;
+- a podcast:guid that is the only shared identifier, when the titles differ: publishers
+  who start a show by copying another one copy its GUID too. In the labelled sample 24 of
+  25 wrong automatic merges were exactly this (rules v2). Such a match needs the same
+  normalised title, an Apple ID, a feed address or a Podcast Index id to merge; otherwise
+  it is queued with 'unconfirmed_guid' in its features.
 Fuzzy matching lives elsewhere.
 """
 
@@ -20,19 +25,47 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from ddm.identifiers import entity_id_for
-from ddm.ingest.records import NormalizedRecord, source_key_order
+from ddm.ingest.records import NormalizedRecord, norm_title, source_key_order
 
 logger = logging.getLogger(__name__)
 
 CONFLICT_METHOD = "strong_id_conflict_v1"
+# A podcast:guid was the only link and the titles differ (rules v2): queued, not merged.
+UNCONFIRMED_GUID_METHOD = "unconfirmed_guid_v1"
 # Marks "strong identifiers disagree"; not comparable with fuzzy-match scores.
 CONFLICT_SCORE = 1.0
 # An entity has at most one of each; feed URLs are excluded because feeds move.
 SINGLE_VALUED_KINDS = frozenset({"podcast_guid", "itunes_id", "wikidata_qid"})
 # Genuine duplicates of one podcast rarely exceed a few feeds; more means a shared default.
 MAX_RECORDS_PER_IDENTIFIER = 3
+# Bump when a merge rule changes; part of every import's and discovery's input.
+RESOLUTION_RULES = 2
+# Identifiers that confirm a podcast:guid match on their own.
+CONFIRMING_KINDS = frozenset({"itunes_id", "feed_url", "podcastindex_id", "wikidata_qid"})
 
 Identifier = tuple[str, str]
+
+
+@dataclass(frozen=True)
+class Attachment:
+    """A record joined to an entity by a strong identifier; `existing` means the entity
+    was known before this batch rather than created by an earlier record in it."""
+
+    source_key: str
+    entity_id: UUID
+    shared: tuple[Identifier, ...]
+    existing: bool
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """A pair queued for review, with the method that proposed it and its score."""
+
+    source_key: str
+    entity_id: UUID
+    method: str
+    score: float
+    features: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -42,6 +75,7 @@ class ResolutionPlan:
     new_identifiers: tuple[tuple[str, str, UUID], ...]
     candidates: tuple[tuple[str, UUID, dict[str, Any]], ...]
     strong_id_merges: int
+    attached: tuple[Attachment, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -82,31 +116,98 @@ def _conflicts(identifiers: Iterable[Identifier], entity_values: Mapping[str, st
     ]
 
 
+def _guid_only(shared: list) -> bool:
+    return not any(kind in CONFIRMING_KINDS for kind, _ in shared)
+
+
+def _title_of(entity_titles: Mapping[UUID, str | None], entity_id: UUID) -> str | None:
+    if entity_id not in entity_titles:
+        # Without it every GUID-only match would look unconfirmed: fail loudly instead.
+        raise ValueError(f"no title known for entity {entity_id}; pass titles= for `existing`")
+    return entity_titles[entity_id]
+
+
+def _same_title(a: str | None, b: str | None) -> bool:
+    na, nb = norm_title(a), norm_title(b)
+    return na is not None and na == nb
+
+
+def _narrow(hits: dict[UUID, list], title: str | None, entity_titles) -> dict[UUID, list]:
+    """GUID-only hits give way to an entity a confirming identifier hits, unless the titles
+    agree too (then it is a genuine conflict and stays for review)."""
+    if all(_guid_only(shared) for shared in hits.values()):
+        return hits
+    return {
+        e: shared
+        for e, shared in hits.items()
+        if not _guid_only(shared) or _same_title(title, _title_of(entity_titles, e))
+    }
+
+
+def _split_sibling(shared: list, title: str | None, splits, entity_titles) -> UUID | None:
+    """An entity this batch already split off under the same GUID, with the same title."""
+    for kind, value in shared:
+        for entity_id in splits.get((kind, value), ()):
+            if _same_title(title, entity_titles[entity_id]):
+                return entity_id
+    return None
+
+
 def plan_resolution(
     records: Iterable[NormalizedRecord],
     existing: Mapping[Identifier, UUID],
     source_name: str,
     ambiguous: frozenset[Identifier] = frozenset(),
+    titles: Mapping[UUID, str | None] | None = None,
 ) -> ResolutionPlan:
+    """`titles` are the display names of the entities in `existing`.
+
+    A GUID stays owned by the entity that first had it. Within one batch a record split off
+    under a copied GUID can still be joined by later records with its title; across runs
+    such a record is only compared with the first owner (known limitation, never a wrong
+    merge: the pair goes to review).
+    """
     index = dict(existing)
+    known = frozenset(existing.values())
+    entity_titles = dict(titles or {})
     single_values = _single_values(index)
-    assignments, new_entities, new_identifiers, candidates = [], [], [], []
+    splits: dict[Identifier, list[UUID]] = {}
+    assignments, new_entities, new_identifiers, candidates, attached = [], [], [], [], []
     merges = 0
     for record in sorted(records, key=lambda r: source_key_order(r.source_key)):
         usable = [i for i in record.identifiers if i not in ambiguous]
-        hits = _hits(usable, index)
+        all_hits = _hits(usable, index)
+        hits = _narrow(all_hits, record.display_name, entity_titles)
         target = next(iter(hits)) if len(hits) == 1 else None
         conflicts = _conflicts(usable, single_values.get(target, {})) if target else []
-        if target and not conflicts:
+        unconfirmed = (
+            bool(target)
+            and _guid_only(hits[target])
+            and not _same_title(record.display_name, _title_of(entity_titles, target))
+        )
+        if unconfirmed and not conflicts:
+            sibling = _split_sibling(hits[target], record.display_name, splits, entity_titles)
+            if sibling is not None:
+                hits, target, unconfirmed = {sibling: hits[target]}, sibling, False
+        if target and not conflicts and not unconfirmed:
             entity_id = target
             merges += 1
+            shared = tuple((kind, value) for kind, value in hits[target])
+            attached.append(Attachment(record.source_key, target, shared, target in known))
         else:
             entity_id = entity_id_for(source_name, record.source_key)
             new_entities.append((entity_id, record.display_name, record.source_key))
+            entity_titles[entity_id] = record.display_name
             extra = {"conflicting": conflicts} if conflicts else {}
+            if unconfirmed and not conflicts:
+                extra = {"unconfirmed_guid": True}
+                for identifier in hits[target]:
+                    splits.setdefault(tuple(identifier), []).append(entity_id)
+            # Narrowing only decides whether to merge; a reviewer sees every entity hit.
+            queued = all_hits if conflicts or len(hits) > 1 else hits
             candidates.extend(
                 (record.source_key, other, {"shared": shared, **extra})
-                for other, shared in hits.items()
+                for other, shared in queued.items()
             )
         for kind, value in usable:
             if (kind, value) not in index:
@@ -121,6 +222,7 @@ def plan_resolution(
         new_identifiers=tuple(new_identifiers),
         candidates=tuple(candidates),
         strong_id_merges=merges,
+        attached=tuple(attached),
     )
 
 
@@ -195,6 +297,19 @@ def load_identifier_index(
     return {(kind, value): entity_id for kind, value, entity_id in rows}
 
 
+def load_entity_titles(
+    conn: psycopg.Connection, entity_ids: Iterable[UUID]
+) -> dict[UUID, str | None]:
+    """Display names of the entities a batch hits, for confirming GUID-only matches."""
+    ids = list(set(entity_ids))
+    if not ids:
+        return {}
+    rows = conn.execute(
+        "SELECT entity_id, display_name FROM entities WHERE entity_id = ANY(%s)", (ids,)
+    ).fetchall()
+    return dict(rows)
+
+
 def load_ambiguous_identifiers(conn: psycopg.Connection) -> frozenset[Identifier]:
     rows = conn.execute("SELECT id_kind, id_value FROM ambiguous_identifiers").fetchall()
     return frozenset((kind, value) for kind, value in rows)
@@ -237,9 +352,29 @@ def write_identifiers(
     )
 
 
+def conflict_method(features: Mapping[str, Any]) -> str:
+    return UNCONFIRMED_GUID_METHOD if features.get("unconfirmed_guid") else CONFLICT_METHOD
+
+
 def write_candidates(
     conn: psycopg.Connection,
     candidates: Iterable[tuple[str, UUID, dict[str, Any]]],
+    *,
+    source_id: int,
+    run_id: int,
+) -> int:
+    """Queue strong-identifier conflicts for review; returns how many were new."""
+    return write_scored_candidates(
+        conn,
+        (Candidate(key, eid, conflict_method(f), CONFLICT_SCORE, f) for key, eid, f in candidates),
+        source_id=source_id,
+        run_id=run_id,
+    )
+
+
+def write_scored_candidates(
+    conn: psycopg.Connection,
+    candidates: Iterable[Candidate],
     *,
     source_id: int,
     run_id: int,
@@ -254,8 +389,16 @@ def write_candidates(
             ON CONFLICT (source_id, source_key, entity_id, method) DO NOTHING
             """,
             [
-                (source_id, key, eid, CONFLICT_METHOD, CONFLICT_SCORE, Jsonb(features), run_id)
-                for key, eid, features in candidates
+                (
+                    source_id,
+                    c.source_key,
+                    c.entity_id,
+                    c.method,
+                    c.score,
+                    Jsonb(dict(c.features)),
+                    run_id,
+                )
+                for c in candidates
             ],
         )
         return max(cur.rowcount, 0)

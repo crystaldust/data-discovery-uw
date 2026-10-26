@@ -147,3 +147,11 @@ def test_source_key_order_sorts_numbers_by_value_then_text_keys():
 
 def test_normalized_record_type_is_exported():
     assert isinstance(build(), NormalizedRecord)
+
+
+def test_norm_title_drops_latin_accents_only():
+    from ddm.ingest.records import norm_title
+
+    assert norm_title("Café Crème") == "cafe creme"
+    assert norm_title("がっこう") != norm_title("かっこう")  # dakuten change the word
+    assert norm_title("हिंदी") != norm_title("हद")  # vowel signs are letters here
