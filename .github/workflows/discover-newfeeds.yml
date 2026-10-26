@@ -1,0 +1,58 @@
+name: discover-newfeeds
+
+# Classify feeds Podcast Index added since the last run (phase 4; phase 7 adds a schedule).
+# Runs here because the API client ignores proxy settings by design and some developer
+# networks need one. The job itself enforces the honest User-Agent, 1 request per second,
+# stopping on 401/403/429 and remembering the backoff; this workflow only supplies settings.
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "English feeds to look up this run (1-10000)"
+        required: true
+        default: "500"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discover-newfeeds
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PODCASTINDEX_API_KEY: ${{ secrets.PODCASTINDEX_API_KEY }}
+      PODCASTINDEX_API_SECRET: ${{ secrets.PODCASTINDEX_API_SECRET }}
+      DDM_USER_AGENT: ${{ vars.DDM_USER_AGENT }}
+      # Optional; unset means 30 days.
+      DDM_REFUSED_BACKOFF_DAYS: ${{ vars.DDM_REFUSED_BACKOFF_DAYS }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Check settings and hide the database host from the public log
+        run: |
+          for name in DATABASE_URL PODCASTINDEX_API_KEY PODCASTINDEX_API_SECRET DDM_USER_AGENT; do
+            test -n "${!name}" || { echo "$name is not set"; exit 1; }
+          done
+          host=$(python3 -c 'import os, urllib.parse; print(urllib.parse.urlsplit(os.environ["DATABASE_URL"]).hostname or "")')
+          test -n "$host" && echo "::add-mask::$host"
+
+      - name: Install
+        run: uv sync --frozen --no-dev
+
+      - name: Apply migrations
+        run: uv run --no-dev ddm migrate
+
+      - name: Discover
+        env:
+          LIMIT: ${{ inputs.limit }}
+        # Exit code 3 means the source refused or was down: the run is 'partial' and its
+        # committed batches are kept. Show it as a failed step so it gets noticed.
+        run: uv run --no-dev ddm discover-newfeeds --limit "$LIMIT"

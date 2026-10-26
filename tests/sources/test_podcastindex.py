@@ -7,6 +7,7 @@ from ddm.config import PodcastIndexConfig
 from ddm.sources.podcastindex import (
     PodcastIndexClient,
     SourceAccessDenied,
+    SourceResponseError,
     SourceUnavailable,
     build_auth_headers,
 )
@@ -146,10 +147,30 @@ def test_other_client_errors_raise_immediately():
         calls.append(request)
         return httpx.Response(400, text="bad request")
 
-    with make_client(handler) as client, pytest.raises(httpx.HTTPStatusError):
+    with make_client(handler) as client, pytest.raises(SourceResponseError, match="status=400"):
         client.get("/podcasts/byitunesid", {"id": "x"})
 
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, text="<html>gateway</html>"),
+        httpx.Response(200, json=["not", "an", "object"]),
+    ],
+)
+def test_a_body_that_is_not_a_json_object_is_a_response_error(response):
+    with make_client(lambda request: response) as client, pytest.raises(SourceResponseError):
+        client.get("/podcasts/byfeedid", {"id": 1})
+
+
+def test_the_client_ignores_proxy_settings_and_does_not_follow_redirects(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+
+    with PodcastIndexClient(CONFIG) as client:
+        assert client._http.trust_env is False
+        assert client._http.follow_redirects is False
 
 
 def test_get_does_not_mutate_caller_params():

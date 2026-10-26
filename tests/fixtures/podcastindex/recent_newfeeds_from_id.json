@@ -1,0 +1,58 @@
+{
+  "status": true,
+  "feeds": [
+    {
+      "id": 8087486,
+      "url": "https://anchor.fm/s/118d81b20/podcast/rss",
+      "timeAdded": 1792998673,
+      "status": "confirmed",
+      "contentHash": "",
+      "language": "es-mx",
+      "image": "https://d3t3ozftmdmh3i.cloudfront.net/staging/podcast_uploaded_nologo/47017832/47017832-1792517037423-732cc78e1d6ee.jpg",
+      "dead": 0
+    },
+    {
+      "id": 8087487,
+      "url": "https://askbuddhism.com/feed/podcast/ornament-khensur-rinpoche/",
+      "timeAdded": 1792998720,
+      "status": "confirmed",
+      "contentHash": "",
+      "language": "en",
+      "image": "",
+      "dead": 0
+    },
+    {
+      "id": 8087488,
+      "url": "https://askbuddhism.com/feed/podcast/about-meditation-khensur-rinpoche/",
+      "timeAdded": 1792998785,
+      "status": "confirmed",
+      "contentHash": "",
+      "language": "en",
+      "image": "",
+      "dead": 0
+    },
+    {
+      "id": 8087489,
+      "url": "https://www.spreaker.com/show/7496038/episodes/feed",
+      "timeAdded": 1792998814,
+      "status": "confirmed",
+      "contentHash": "",
+      "language": "es",
+      "image": "https://d3wo5wojvuv7l.cloudfront.net/images.spreaker.com/nuvolari-assets/orange_square_mic.jpg",
+      "dead": 0
+    },
+    {
+      "id": 8087490,
+      "url": "https://oncdigest.com/listen/feed.xml",
+      "timeAdded": 1792998838,
+      "status": "confirmed",
+      "contentHash": "",
+      "language": "en-us",
+      "image": "https://images.digest.famsanmar.com/podcast/artwork/oi-podcast-cover-thoracic-hn-3000.jpg",
+      "dead": 0
+    }
+  ],
+  "count": 5,
+  "max": 5,
+  "description": "Feeds added in the last 24 hours."
+}

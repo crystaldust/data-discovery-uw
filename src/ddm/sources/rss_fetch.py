@@ -190,7 +190,7 @@ def _redact(url: str) -> str:
         return "<invalid url>"
 
 
-def _parse_retry_after(value: str | None, now: datetime) -> datetime | None:
+def parse_retry_after(value: str | None, now: datetime) -> datetime | None:
     if value is None:
         return None
     value = value.strip()
@@ -343,7 +343,7 @@ class FeedFetcher:
 
     def _refuse(self, host: str, status: int, headers: httpx.Headers) -> datetime:
         now = self._wall_clock()
-        retry_after = _parse_retry_after(headers.get("Retry-After"), now)
+        retry_after = parse_retry_after(headers.get("Retry-After"), now)
         if retry_after is None:
             retry_after = now + (RATE_LIMIT_BACKOFF if status == 429 else self._refused_backoff)
         self._hosts.refused[host] = retry_after
