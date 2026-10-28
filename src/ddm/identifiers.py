@@ -5,6 +5,7 @@ Normalisation is conservative: it removes differences that cannot change which f
 is meant (scheme, host case, default port, fragment, trailing slash) and nothing else.
 """
 
+import re
 import uuid
 from typing import Any
 from urllib.parse import urlsplit
@@ -13,6 +14,11 @@ from urllib.parse import urlsplit
 DDM_ENTITY_NAMESPACE = uuid.UUID("5e3d58e3-60b5-4f04-9754-80ca913058a9")
 
 DEFAULT_PORTS = {"http": 80, "https": 443}
+QID_PATTERN = re.compile(r"Q[1-9][0-9]{0,11}")
+WIKIDATA_ENTITY_PREFIXES = (
+    "http://www.wikidata.org/entity/",
+    "https://www.wikidata.org/entity/",
+)
 
 
 def is_ascii_digits(value: str) -> bool:
@@ -41,6 +47,26 @@ def normalize_feed_url(url: str | None) -> str | None:
     path = parts.path.rstrip("/")
     query = f"?{parts.query}" if parts.query else ""
     return f"{netloc}{path}{query}"
+
+
+def normalize_author_url(url: str | None) -> str | None:
+    """An outlet author page; www. and bare host serve the same page on news sites."""
+    normalized = normalize_feed_url(url)
+    if normalized is None:
+        return None
+    return normalized.removeprefix("www.")
+
+
+def normalize_qid(value: str | None) -> str | None:
+    """A Wikidata item id, bare or as its entity URI; anything else is not one."""
+    if value is None:
+        return None
+    candidate = value.strip()
+    for prefix in WIKIDATA_ENTITY_PREFIXES:
+        if candidate.startswith(prefix):
+            candidate = candidate.removeprefix(prefix)
+            break
+    return candidate if QID_PATTERN.fullmatch(candidate) else None
 
 
 def normalize_itunes_id(value: Any) -> str | None:

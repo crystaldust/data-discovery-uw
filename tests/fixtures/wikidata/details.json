@@ -1,0 +1,42 @@
+{
+  "head": {"vars": ["person", "prop", "value"]},
+  "results": {
+    "bindings": [
+      {
+        "person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q900001"},
+        "prop": {"type": "literal", "value": "P6791"},
+        "value": {"type": "literal", "value": "avery-example"}
+      },
+      {
+        "person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q900001"},
+        "prop": {"type": "literal", "value": "P8297"},
+        "value": {"type": "literal", "value": "avery-example"}
+      },
+      {
+        "person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q900001"},
+        "prop": {"type": "literal", "value": "P856"},
+        "value": {"type": "uri", "value": "https://avery.example.org/"}
+      },
+      {
+        "person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q900001"},
+        "prop": {"type": "literal", "value": "P2002"},
+        "value": {"type": "literal", "value": "avery_example"}
+      },
+      {
+        "person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q900003"},
+        "prop": {"type": "literal", "value": "P6791"},
+        "value": {"type": "literal", "value": "../../admin"}
+      },
+      {
+        "person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q900003"},
+        "prop": {"type": "literal", "value": "P856"},
+        "value": {"type": "uri", "value": "javascript:alert(1)"}
+      },
+      {
+        "person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q900003"},
+        "prop": {"type": "literal", "value": "P2002"},
+        "value": {"type": "literal", "value": "far_too_long_for_an_x_handle"}
+      }
+    ]
+  }
+}

@@ -633,3 +633,15 @@ def test_only_identity_compatible_encodings_are_requested():
     fetch(make_fetcher(handler))
 
     assert handler.feed_requests()[0].headers["Accept-Encoding"] == "gzip, deflate"
+
+
+def test_logged_urls_go_through_the_given_redactor(caplog):
+    handler = Recorder({"/show.xml": ok(), "/gone.xml": httpx.Response(404)})
+    fetcher = make_fetcher(handler, log_url=lambda url: "feed#1")
+
+    with caplog.at_level("INFO", logger="ddm.sources.rss_fetch"):
+        fetch(fetcher)
+        fetch(fetcher, url="https://feeds.example.com/gone.xml")
+
+    assert "show.xml" not in caplog.text and "gone.xml" not in caplog.text
+    assert "url=feed#1" in caplog.text

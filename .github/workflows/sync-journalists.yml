@@ -1,0 +1,73 @@
+name: sync-journalists
+
+# Phase 5: snapshot the outlets' journalists from Wikidata, then read outlet RSS bylines
+# (phase 7 adds a schedule). Both jobs enforce the honest User-Agent, robots.txt for
+# feeds, one query at a time for Wikidata, and stop on 401/403/429 with a remembered
+# backoff; this workflow only supplies settings.
+
+on:
+  workflow_dispatch:
+    inputs:
+      author_feeds:
+        description: "Per-author feeds to read besides the section feeds (1-200)"
+        required: true
+        default: "50"
+  # workflow_dispatch only works once a workflow is on the default branch; until then a
+  # push of this file to the phase 5 branch runs it. Removed before merging.
+  push:
+    branches: [feat/phase-5-journalists]
+    paths: [.github/workflows/sync-journalists.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: journalists
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The database URL is given only to the steps that use it, not to third-party actions.
+    env:
+      DDM_USER_AGENT: ${{ vars.DDM_USER_AGENT }}
+      # Optional; unset means 30 days.
+      DDM_REFUSED_BACKOFF_DAYS: ${{ vars.DDM_REFUSED_BACKOFF_DAYS }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Check settings and hide the database host from the public log
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          for name in DATABASE_URL DDM_USER_AGENT; do
+            test -n "${!name}" || { echo "$name is not set"; exit 1; }
+          done
+          host=$(python3 -c 'import os, urllib.parse; print(urllib.parse.urlsplit(os.environ["DATABASE_URL"]).hostname or "")')
+          test -n "$host" || { echo "DATABASE_URL has no host"; exit 1; }
+          echo "::add-mask::$host"
+
+      - name: Install
+        run: uv sync --frozen --no-dev
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run --no-dev ddm migrate
+
+      # Exit code 3 means the source refused or was down: the run is 'partial'. Shown as a
+      # failed step so it gets noticed; the byline step still runs.
+      - name: Sync journalists from Wikidata
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run --no-dev ddm sync-journalists
+
+      - name: Sync outlet bylines
+        if: ${{ !cancelled() }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          AUTHOR_FEEDS: ${{ inputs.author_feeds || '50' }}
+        run: uv run --no-dev ddm sync-bylines --author-feeds "$AUTHOR_FEEDS"

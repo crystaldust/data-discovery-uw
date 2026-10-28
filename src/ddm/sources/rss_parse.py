@@ -95,36 +95,36 @@ def _is(element: Element, namespace: str, local: str) -> bool:
     return ns in PODCAST_NAMESPACES if namespace == "podcast" else ns == namespace
 
 
-def _text(value: str | None, limit: int = MAX_TEXT_CHARS) -> str | None:
+def clean_text(value: str | None, limit: int = MAX_TEXT_CHARS) -> str | None:
     if value is None:
         return None
     # PostgreSQL text and jsonb cannot hold NUL characters.
     return value.replace("\x00", "").strip()[:limit].strip() or None
 
 
-def _children(parent: Element, namespace: str, local: str) -> Iterator[Element]:
+def children(parent: Element, namespace: str, local: str) -> Iterator[Element]:
     return (child for child in parent if _is(child, namespace, local))
 
 
-def _first_text(
+def first_text(
     parent: Element, namespace: str, local: str, limit: int = MAX_TEXT_CHARS
 ) -> str | None:
-    for child in _children(parent, namespace, local):
-        if (value := _text(child.text, limit)) is not None:
+    for child in children(parent, namespace, local):
+        if (value := clean_text(child.text, limit)) is not None:
             return value
     return None
 
 
 def _first_attr(parent: Element, namespace: str, local: str, attr: str) -> str | None:
-    for child in _children(parent, namespace, local):
-        if (value := _text(child.get(attr))) is not None:
+    for child in children(parent, namespace, local):
+        if (value := clean_text(child.get(attr))) is not None:
             return value
     return None
 
 
 def _owner_field(channel: Element, local: str) -> str | None:
-    for owner in _children(channel, ITUNES_NS, "owner"):
-        if (value := _first_text(owner, ITUNES_NS, local)) is not None:
+    for owner in children(channel, ITUNES_NS, "owner"):
+        if (value := first_text(owner, ITUNES_NS, local)) is not None:
             return value
     return None
 
@@ -133,8 +133,8 @@ def _image_url(channel: Element) -> str | None:
     href = _first_attr(channel, ITUNES_NS, "image", "href")
     if href is not None:
         return href
-    for image in _children(channel, "", "image"):
-        if (url := _first_text(image, "", "url")) is not None:
+    for image in children(channel, "", "image"):
+        if (url := first_text(image, "", "url")) is not None:
             return url
     return None
 
@@ -145,12 +145,12 @@ def _categories(channel: Element) -> tuple[str, ...]:
     Iterative on purpose: a hostile feed can nest thousands of levels deep.
     """
     found: dict[str, None] = {}
-    stack = list(reversed(list(_children(channel, ITUNES_NS, "category"))))
+    stack = list(reversed(list(children(channel, ITUNES_NS, "category"))))
     while stack and len(found) < MAX_CATEGORIES:
         category = stack.pop()
-        if (text := _text(category.get("text"))) is not None:
+        if (text := clean_text(category.get("text"))) is not None:
             found.setdefault(text.lower(), None)
-        stack.extend(reversed(list(_children(category, ITUNES_NS, "category"))))
+        stack.extend(reversed(list(children(category, ITUNES_NS, "category"))))
     return tuple(found)
 
 
@@ -159,11 +159,11 @@ def _lower(value: str | None) -> str | None:
 
 
 def _explicit(channel: Element) -> bool | None:
-    value = _first_text(channel, ITUNES_NS, "explicit")
+    value = first_text(channel, ITUNES_NS, "explicit")
     return EXPLICIT_VALUES.get(value.lower()) if value is not None else None
 
 
-def _parse_date(value: str) -> datetime | None:
+def parse_date(value: str) -> datetime | None:
     try:
         moment = parsedate_to_datetime(value)
     except (TypeError, ValueError, IndexError):
@@ -183,8 +183,8 @@ def _episode_dates(items: list[Element], fetched_at: datetime) -> list[datetime]
     latest_allowed = fetched_at + FUTURE_TOLERANCE
     dates = []
     for episode in items:
-        raw = _first_text(episode, "", "pubDate")
-        moment = _parse_date(raw) if raw is not None else None
+        raw = first_text(episode, "", "pubDate")
+        moment = parse_date(raw) if raw is not None else None
         if moment is not None and moment <= latest_allowed:
             dates.append(moment)
     return dates
@@ -204,16 +204,21 @@ def _root_of(body: bytes) -> Element:
     return events.root
 
 
-def _channel_of(body: bytes) -> Element:
+def parse_xml_root(body: bytes) -> Element:
+    """The root of any XML document, parsed safely; raises FeedParseError."""
     try:
-        root = _root_of(body)
+        return _root_of(body)
     except DefusedXmlException as exc:
         raise FeedParseError("unsafe_xml") from exc
     except ParseError as exc:
         raise FeedParseError("malformed_xml") from exc
+
+
+def _channel_of(body: bytes) -> Element:
+    root = parse_xml_root(body)
     if _split(root.tag)[1] != "rss":
         raise FeedParseError("unsupported_format")
-    channel = next(_children(root, "", "channel"), None)
+    channel = next(children(root, "", "channel"), None)
     if channel is None:
         raise FeedParseError("no_channel")
     return channel
@@ -222,22 +227,22 @@ def _channel_of(body: bytes) -> Element:
 def parse_feed(body: bytes, fetched_at: datetime) -> ParsedChannel:
     """Parse one RSS body; raises FeedParseError when it is not a readable RSS feed."""
     channel = _channel_of(body)
-    items = list(_children(channel, "", "item"))
+    items = list(children(channel, "", "item"))
     dates = _episode_dates(items, fetched_at)
     return ParsedChannel(
-        title=_first_text(channel, "", "title"),
-        link=_first_text(channel, "", "link"),
-        description=_first_text(channel, "", "description", MAX_DESCRIPTION_CHARS)
-        or _first_text(channel, ITUNES_NS, "summary", MAX_DESCRIPTION_CHARS),
-        language=_lower(_first_text(channel, "", "language")),
-        itunes_author=_first_text(channel, ITUNES_NS, "author"),
+        title=first_text(channel, "", "title"),
+        link=first_text(channel, "", "link"),
+        description=first_text(channel, "", "description", MAX_DESCRIPTION_CHARS)
+        or first_text(channel, ITUNES_NS, "summary", MAX_DESCRIPTION_CHARS),
+        language=_lower(first_text(channel, "", "language")),
+        itunes_author=first_text(channel, ITUNES_NS, "author"),
         owner_name=_owner_field(channel, "name"),
         owner_email=_owner_field(channel, "email"),
-        managing_editor=_first_text(channel, "", "managingEditor"),
+        managing_editor=first_text(channel, "", "managingEditor"),
         image_url=_image_url(channel),
-        podcast_guid=_first_text(channel, "podcast", "guid"),
-        new_feed_url=_first_text(channel, ITUNES_NS, "new-feed-url"),
-        itunes_type=_lower(_first_text(channel, ITUNES_NS, "type")),
+        podcast_guid=first_text(channel, "podcast", "guid"),
+        new_feed_url=first_text(channel, ITUNES_NS, "new-feed-url"),
+        itunes_type=_lower(first_text(channel, ITUNES_NS, "type")),
         explicit=_explicit(channel),
         categories=_categories(channel),
         episode_count=len(items),

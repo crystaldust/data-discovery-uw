@@ -38,6 +38,7 @@ def test_discover_returns_bundled_migrations_in_version_order():
         (2, "records_and_entities"),
         (3, "podcast_refresh"),
         (4, "discovery"),
+        (5, "journalists"),
     ]
     assert all(len(m.checksum) == 64 for m in migrations)
 
@@ -74,7 +75,7 @@ def test_migrate_creates_every_table_on_an_empty_database(fresh_db):
             "select tablename from pg_tables where schemaname = 'public'"
         ).fetchall()
     }
-    assert [m.version for m in applied] == [1, 2, 3, 4]
+    assert [m.version for m in applied] == [1, 2, 3, 4, 5]
     assert tables == EXPECTED_TABLES
 
 
@@ -417,3 +418,46 @@ def test_the_unused_gin_name_index_is_gone(fresh_db):
     ).fetchone()
 
     assert row is None
+
+
+@pytest.mark.integration
+def test_wikidata_and_outlet_rss_sources_are_seeded(fresh_db):
+    migrate(fresh_db)
+
+    rows = fresh_db.execute(
+        "select source_id, name from sources where source_id in (4, 5) order by source_id"
+    ).fetchall()
+
+    assert rows == [(4, "wikidata"), (5, "outlet_rss")]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("table", ["entity_identifiers", "ambiguous_identifiers"])
+def test_identifier_tables_accept_outlet_author_urls_but_no_unknown_kind(fresh_db, table):
+    migrate(fresh_db)
+    run_id, a, _ = _discovery_fixture(fresh_db)
+    if table == "entity_identifiers":
+        insert = """insert into entity_identifiers
+                      (id_kind, id_value, entity_id, source_id, added_run)
+                    values (%s, 'theatlantic.com/author/a-b', %s, 1, %s)"""
+    else:
+        insert = """insert into ambiguous_identifiers
+                      (id_kind, id_value, record_count, source_id, first_run)
+                    values (%s, 'theatlantic.com/author/a-b', 2, 1, %s)"""
+    params = (a, run_id) if table == "entity_identifiers" else (run_id,)
+
+    fresh_db.execute(insert, ("outlet_author_url", *params))
+    with pytest.raises(psycopg.errors.CheckViolation):
+        fresh_db.execute(insert, ("muckrack_id", *params))
+
+
+@pytest.mark.integration
+def test_run_metrics_count_soft_deleted_rows(fresh_db):
+    migrate(fresh_db)
+
+    row = fresh_db.execute(
+        "select 1 from information_schema.columns"
+        " where table_name = 'run_metrics' and column_name = 'rows_deleted'"
+    ).fetchone()
+
+    assert row == (1,)
