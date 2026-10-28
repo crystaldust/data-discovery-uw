@@ -12,11 +12,6 @@ on:
         description: "Per-author feeds to read besides the section feeds (1-200)"
         required: true
         default: "50"
-  # workflow_dispatch only works once a workflow is on the default branch; until then a
-  # push of this file to the phase 5 branch runs it. Removed before merging.
-  push:
-    branches: [feat/phase-5-journalists]
-    paths: [.github/workflows/sync-journalists.yml, "src/**"]
 
 permissions:
   contents: read
