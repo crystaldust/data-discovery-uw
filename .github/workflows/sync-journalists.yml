@@ -16,7 +16,7 @@ on:
   # push of this file to the phase 5 branch runs it. Removed before merging.
   push:
     branches: [feat/phase-5-journalists]
-    paths: [.github/workflows/sync-journalists.yml]
+    paths: [.github/workflows/sync-journalists.yml, "src/**"]
 
 permissions:
   contents: read

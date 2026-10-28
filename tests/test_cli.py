@@ -576,3 +576,15 @@ def test_sync_bylines_hides_author_slugs_in_fetch_logs(monkeypatch):
         main(["sync-bylines"])
 
     assert seen["log_url"] is public_url
+
+
+def test_http_client_request_lines_stay_out_of_job_logs(monkeypatch):
+    """httpx logs every request URL at INFO; author feed URLs carry people's names."""
+    import logging
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    logging.getLogger("httpx").setLevel(logging.NOTSET)
+
+    main(["migrate"])
+
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING

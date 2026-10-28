@@ -393,6 +393,9 @@ def _run_refresh(url: str, limit: int, same_as: int | None) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    # httpx logs every request URL at INFO. Job logs are public (Actions) and author feed
+    # URLs carry people's names; our clients log their own redacted lines instead.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         if args.command == "eval-report":
             # Reproducible by anyone from the two files alone, without a database.
