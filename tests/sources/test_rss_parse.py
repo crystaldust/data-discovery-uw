@@ -9,7 +9,9 @@ from ddm.sources.rss_parse import (
     MAX_ELEMENTS,
     MAX_TEXT_CHARS,
     FeedParseError,
+    parse_date,
     parse_feed,
+    parse_xml_root,
 )
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "rss"
@@ -258,3 +260,36 @@ def test_long_text_is_truncated():
 
     assert len(channel.title) == MAX_TEXT_CHARS
     assert len(channel.description) == MAX_DESCRIPTION_CHARS
+
+
+def test_parse_xml_root_refuses_entity_declarations():
+    with pytest.raises(FeedParseError) as caught:
+        parse_xml_root(load("xxe_feed.xml"))
+
+    assert caught.value.reason == "unsafe_xml"
+
+
+def test_parse_xml_root_reports_malformed_xml():
+    with pytest.raises(FeedParseError) as caught:
+        parse_xml_root(load("malformed_feed.xml"))
+
+    assert caught.value.reason == "malformed_xml"
+
+
+def test_parse_xml_root_returns_any_root_element_including_atom():
+    root = parse_xml_root(b'<feed xmlns="http://www.w3.org/2005/Atom"><title>t</title></feed>')
+
+    assert root.tag == "{http://www.w3.org/2005/Atom}feed"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Mon, 26 Oct 2026 10:00:00 +0100", datetime(2026, 10, 26, 9, 0, tzinfo=UTC)),
+        ("2026-10-26T10:00:00-04:00", datetime(2026, 10, 26, 14, 0, tzinfo=UTC)),
+        ("2026-10-26T10:00:00", datetime(2026, 10, 26, 10, 0, tzinfo=UTC)),
+        ("yesterday", None),
+    ],
+)
+def test_parse_date_reads_rfc_822_and_iso_dates_as_utc(raw, expected):
+    assert parse_date(raw) == expected

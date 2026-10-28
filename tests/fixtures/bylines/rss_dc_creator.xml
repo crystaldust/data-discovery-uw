@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Example Politics</title>
+    <copyright>Copyright 2026 Example Media</copyright>
+    <item>
+      <title>  Budget vote   delayed again </title>
+      <link>https://news.example.com/politics/budget-vote</link>
+      <pubDate>Mon, 26 Oct 2026 10:00:00 +0000</pubDate>
+      <dc:creator>Jane Roe</dc:creator>
+      <dc:creator>John Doe</dc:creator>
+      <description>Not kept.</description>
+    </item>
+    <item>
+      <title>Wire story</title>
+      <link>https://news.example.com/politics/wire</link>
+      <pubDate>Sun, 25 Oct 2026 08:00:00 +0000</pubDate>
+      <author>desk@news.example.com (Sam Writer)</author>
+    </item>
+    <item>
+      <title>Email only</title>
+      <link>https://news.example.com/politics/email-only</link>
+      <author>desk@news.example.com</author>
+    </item>
+    <item>
+      <title>From the future</title>
+      <link>https://news.example.com/politics/future</link>
+      <pubDate>Fri, 01 Jan 2027 00:00:00 +0000</pubDate>
+      <dc:creator>By Jane Roe and John Doe</dc:creator>
+    </item>
+  </channel>
+</rss>

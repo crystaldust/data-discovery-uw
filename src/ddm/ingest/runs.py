@@ -53,6 +53,7 @@ class RunMetrics:
     discovered_rename_or_move: int | None = None
     discovered_duplicate: int | None = None
     discovered_uncertain: int | None = None
+    rows_deleted: int | None = None
 
 
 METRIC_COLUMNS = tuple(f.name for f in fields(RunMetrics))

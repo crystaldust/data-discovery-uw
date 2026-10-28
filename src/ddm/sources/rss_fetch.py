@@ -233,8 +233,12 @@ class FeedFetcher:
         max_body_bytes: int = MAX_BODY_BYTES,
         max_request_seconds: float = MAX_REQUEST_SECONDS,
         refused_backoff: timedelta = REFUSED_BACKOFF,
+        log_url: Callable[[str], str] | None = None,
     ):
+        """`log_url` renders a URL for the logs (default: scheme, host and path); callers
+        whose paths carry personal names (author feeds) pass one that hides them."""
         self._user_agent = user_agent
+        self._log_url = log_url or _redact
         self._resolve_host = resolve_host
         self._monotonic = monotonic
         self._wall_clock = wall_clock
@@ -274,7 +278,7 @@ class FeedFetcher:
         except _Failure as failure:
             logger.info(
                 "rss fetch url=%s outcome=%s reason=%s",
-                _redact(url),
+                self._log_url(url),
                 failure.outcome,
                 failure.reason,
             )
@@ -317,7 +321,7 @@ class FeedFetcher:
         status, headers = response.status, response.headers
         moved = bool(response.hops) and all(h in PERMANENT_REDIRECTS for h in response.hops)
         common = {"status": status, "final_url": response.url, "moved_permanently": moved}
-        logger.info("rss fetch url=%s status=%d", _redact(response.url), status)
+        logger.info("rss fetch url=%s status=%d", self._log_url(response.url), status)
         if status == 304:
             return self._make(
                 ctx,
@@ -456,7 +460,9 @@ class FeedFetcher:
                 body = self._read_body(response, tally, deadline, robots, url)
                 return response.status_code, response.headers, body
         except httpx.TransportError as exc:
-            logger.warning("rss network error url=%s error=%s", _redact(url), type(exc).__name__)
+            logger.warning(
+                "rss network error url=%s error=%s", self._log_url(url), type(exc).__name__
+            )
             raise _Retryable("network_error", url=url) from exc
         except httpx.DecodingError as exc:
             raise _Failure("decoding_error", url=url) from exc

@@ -40,8 +40,12 @@ SINGLE_VALUED_KINDS = frozenset({"podcast_guid", "itunes_id", "wikidata_qid"})
 MAX_RECORDS_PER_IDENTIFIER = 3
 # Bump when a merge rule changes; part of every import's and discovery's input.
 RESOLUTION_RULES = 2
-# Identifiers that confirm a podcast:guid match on their own.
-CONFIRMING_KINDS = frozenset({"itunes_id", "feed_url", "podcastindex_id", "wikidata_qid"})
+# Identifiers that confirm a podcast:guid match on their own. outlet_author_url only
+# appears on journalist records, so podcast resolution is unchanged and RESOLUTION_RULES
+# stays 2.
+CONFIRMING_KINDS = frozenset(
+    {"itunes_id", "feed_url", "podcastindex_id", "wikidata_qid", "outlet_author_url"}
+)
 
 Identifier = tuple[str, str]
 

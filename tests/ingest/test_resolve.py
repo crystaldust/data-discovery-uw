@@ -173,6 +173,33 @@ def test_single_hit_with_a_different_guid_is_not_merged():
     assert plan.strong_id_merges == 0
 
 
+def test_a_shared_author_page_merges_records_whose_names_differ():
+    records = [
+        record("1", ("outlet_author_url", "theatlantic.com/author/a-b"), name="Jane Q. Roe"),
+        record("2", ("outlet_author_url", "theatlantic.com/author/a-b"), name="Jane Roe"),
+    ]
+
+    plan = plan_resolution(records, {}, SOURCE)
+
+    assert dict(plan.assignments) == {"1": eid("1"), "2": eid("1")}
+    assert plan.strong_id_merges == 1
+
+
+def test_an_existing_author_page_confirms_a_match_whatever_the_name():
+    existing_id = uuid.uuid4()
+    existing = {("outlet_author_url", "theatlantic.com/author/a-b"): existing_id}
+
+    plan = plan_resolution(
+        [record("2", ("outlet_author_url", "theatlantic.com/author/a-b"), name="J. Roe")],
+        existing,
+        SOURCE,
+        titles={existing_id: "Jane Roe"},
+    )
+
+    assert dict(plan.assignments) == {"2": existing_id}
+    assert plan.candidates == ()
+
+
 def test_consistency_check_uses_identifiers_of_existing_entities():
     existing_id = uuid.uuid4()
     existing = {("itunes_id", "9"): existing_id, ("podcast_guid", "g1"): existing_id}

@@ -102,7 +102,7 @@ def test_migrate_then_import_twice_reports_skip(monkeypatch, capsys, fresh_db, p
 
     out = capsys.readouterr().out
     assert "applied version=1 name=extensions_and_runs" in out
-    assert "schema up to date version=4" in out
+    assert "schema up to date version=5" in out
     assert "rows_in=3 rejected=0 new=3 changed=0 unchanged=0" in out
     assert "entities_created=2" in out
     assert "strong_id_merges=1" in out
@@ -472,3 +472,119 @@ def test_label_on_a_busy_port_says_so(monkeypatch, capsys, tmp_path):
 
     assert main(["label", "--labels", str(labels), "--port", "9000"]) == 1
     assert "--port" in capsys.readouterr().err
+
+
+def test_sync_journalists_without_a_user_agent_fails_naming_the_variable(monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", SECRET_URL)
+    monkeypatch.delenv("DDM_USER_AGENT", raising=False)
+
+    assert main(["sync-journalists"]) == 1
+
+    err = capsys.readouterr().err
+    assert "DDM_USER_AGENT" in err
+    assert "hunter2" not in err
+
+
+@pytest.mark.integration
+def test_sync_journalists_reports_the_snapshot(monkeypatch, capsys, fresh_db, pg_url):
+    from tests.ingest.test_wikidata_sync import ATLANTIC_PEOPLE, DETAILS, FakeClient
+
+    monkeypatch.setenv("DATABASE_URL", pg_url)
+    monkeypatch.setenv("DDM_USER_AGENT", HONEST_UA)
+    client = FakeClient(ATLANTIC_PEOPLE, DETAILS)
+    monkeypatch.setattr("ddm.cli.WikidataClient", lambda user_agent: _Closing(client))
+    assert main(["migrate"]) == 0
+    capsys.readouterr()
+
+    assert main(["sync-journalists"]) == 0
+
+    out = capsys.readouterr().out
+    assert "status=ok provenance=historical" in out
+    assert "new=2 changed=0 unchanged=0 deleted=0" in out
+    assert "sparql_requests=21" in out
+
+
+@pytest.mark.integration
+def test_a_refused_journalist_sync_exits_with_the_partial_code(
+    monkeypatch, capsys, fresh_db, pg_url
+):
+    from tests.ingest.test_wikidata_sync import ATLANTIC_PEOPLE, FakeClient
+
+    monkeypatch.setenv("DATABASE_URL", pg_url)
+    monkeypatch.setenv("DDM_USER_AGENT", HONEST_UA)
+    client = FakeClient(ATLANTIC_PEOPLE, refuse_at=1)
+    monkeypatch.setattr("ddm.cli.WikidataClient", lambda user_agent: _Closing(client))
+    assert main(["migrate"]) == 0
+
+    assert main(["sync-journalists"]) == 3
+    assert "stopped=refused" in capsys.readouterr().out
+    assert main(["sync-journalists"]) == 1
+    assert "refused an earlier run" in capsys.readouterr().err
+
+
+def test_sync_bylines_parses_its_arguments():
+    assert build_parser().parse_args(["sync-bylines"]).author_feeds == 50
+    assert build_parser().parse_args(["sync-bylines", "--author-feeds", "5"]).author_feeds == 5
+
+
+def test_sync_bylines_author_feeds_out_of_range_fails_before_connecting(monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", SECRET_URL)
+    monkeypatch.setenv("DDM_USER_AGENT", HONEST_UA)
+
+    assert main(["sync-bylines", "--author-feeds", "201"]) == 1
+
+    assert "--author-feeds" in capsys.readouterr().err
+
+
+@pytest.mark.integration
+def test_sync_bylines_reports_classes_and_outcomes(monkeypatch, capsys, fresh_db, pg_url):
+    from tests.ingest.test_bylines import BODIES, DETAILS, PEOPLE, fetcher
+    from tests.ingest.test_wikidata_sync import FakeClient
+
+    monkeypatch.setenv("DATABASE_URL", pg_url)
+    monkeypatch.setenv("DDM_USER_AGENT", HONEST_UA)
+    client = FakeClient(PEOPLE, DETAILS)
+    monkeypatch.setattr("ddm.cli.WikidataClient", lambda user_agent: _Closing(client))
+    feeds = fetcher(BODIES)
+    monkeypatch.setattr("ddm.cli.FeedFetcher", lambda *a, **k: feeds)
+    assert main(["migrate"]) == 0
+    assert main(["sync-journalists"]) == 0
+    capsys.readouterr()
+
+    assert main(["sync-bylines"]) == 0
+
+    out = capsys.readouterr().out
+    assert "status=ok feeds=6 fetched=6" in out
+    assert "authors=5 organisation_bylines=1" in out
+    assert "classified new=2 rename_or_move=1 duplicate=1 uncertain=1" in out
+
+
+def test_sync_bylines_hides_author_slugs_in_fetch_logs(monkeypatch):
+    from ddm.sources.outlet_rss import public_url
+
+    monkeypatch.setenv("DATABASE_URL", SECRET_URL)
+    monkeypatch.setenv("DDM_USER_AGENT", HONEST_UA)
+    seen = {}
+
+    def fake_fetcher(user_agent, **kwargs):
+        seen.update(kwargs)
+        raise RuntimeError("stop before connecting")
+
+    monkeypatch.setattr("ddm.cli.FeedFetcher", fake_fetcher)
+
+    with pytest.raises(RuntimeError, match="stop before connecting"):
+        main(["sync-bylines"])
+
+    assert seen["log_url"] is public_url
+
+
+def test_http_client_request_lines_stay_out_of_job_logs(monkeypatch):
+    """httpx logs every request URL at INFO; author feed URLs carry people's names."""
+    import logging
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    logging.getLogger("httpx").setLevel(logging.NOTSET)
+
+    main(["migrate"])
+
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING

@@ -193,7 +193,7 @@ def _classify_unmatched(
     return result, candidates
 
 
-def _write_discoveries(
+def write_discoveries(
     conn: psycopg.Connection,
     classified: Mapping[str, Classification],
     entity_ids: Mapping[str, UUID],
@@ -273,7 +273,7 @@ def discover_batch(
         records=records,
         entity_ids=entity_ids,
     )
-    _write_discoveries(conn, classified, entity_ids, source_id=source_id, run_id=run_id)
+    write_discoveries(conn, classified, entity_ids, source_id=source_id, run_id=run_id)
     per_kind = {kind: 0 for kind in KINDS}
     for c in classified.values():
         per_kind[c.kind] += 1

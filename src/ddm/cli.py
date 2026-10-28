@@ -1,4 +1,5 @@
-"""Command line entry point: `ddm migrate`, `ddm import-baseline`, `ddm refresh-podcasts`.
+"""Command line entry point: `ddm migrate`, `ddm import-baseline`, `ddm refresh-podcasts`,
+discovery, evaluation and the journalist jobs.
 
 Jobs use the direct (non-pooled) DATABASE_URL: temp tables and advisory locks do not
 survive PgBouncer transaction pooling. Output names the database host at most, never
@@ -32,6 +33,13 @@ from ddm.eval.report import write_report
 from ddm.eval.sample import EvalInputError, write_sample
 from ddm.ingest.backoff import DiscoveryBackoff
 from ddm.ingest.baseline import BASELINE_CUTOFF, ImportReport, import_baseline
+from ddm.ingest.bylines import (
+    DEFAULT_AUTHOR_FEEDS,
+    MAX_AUTHOR_FEEDS,
+    BylineInputError,
+    BylineReport,
+    sync_bylines,
+)
 from ddm.ingest.discover_dump import DiscoveryInputError, DiscoveryReport, discover_dump
 from ddm.ingest.discover_newfeeds import DEFAULT_LIMIT as NEWFEEDS_LIMIT
 from ddm.ingest.discover_newfeeds import MAX_LIMIT as NEWFEEDS_MAX
@@ -44,8 +52,16 @@ from ddm.ingest.refresh import (
     RefreshReport,
     refresh_podcasts,
 )
+from ddm.ingest.wikidata_sync import (
+    JournalistInputError,
+    JournalistSyncBusy,
+    JournalistSyncReport,
+    sync_journalists,
+)
+from ddm.sources.outlet_rss import public_url
 from ddm.sources.podcastindex import PodcastIndexClient
 from ddm.sources.rss_fetch import REFUSED_BACKOFF, FeedFetcher
+from ddm.sources.wikidata import WikidataClient
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +116,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=NEWFEEDS_LIMIT,
         help=f"English feeds to look up (1-{NEWFEEDS_MAX})",
+    )
+    commands.add_parser("sync-journalists", help="snapshot the outlets' journalists from Wikidata")
+    bylines = commands.add_parser(
+        "sync-bylines", help="read outlet RSS bylines and classify first-seen authors"
+    )
+    bylines.add_argument(
+        "--author-feeds",
+        type=int,
+        default=DEFAULT_AUTHOR_FEEDS,
+        help=f"per-author feeds to read besides the section feeds (1-{MAX_AUTHOR_FEEDS})",
     )
     sample = commands.add_parser("eval-sample", help="draw the pairs to label by hand")
     sample.add_argument("--out", type=Path, default=EVAL_DIR / "labels.csv")
@@ -239,6 +265,59 @@ def _run_discover_newfeeds(url: str, limit: int) -> int:
     return 0 if report.status == "ok" else PARTIAL_EXIT
 
 
+def _format_journalists(report: JournalistSyncReport) -> str:
+    m = report.metrics
+    return (
+        f"run_id={report.run_id} status={report.status} provenance={report.provenance} "
+        f"stopped={report.stopped or '-'} rejected={m.rows_rejected or 0}\n"
+        f"new={m.rows_new or 0} changed={m.rows_changed or 0} "
+        f"unchanged={m.rows_unchanged or 0} deleted={m.rows_deleted or 0} "
+        f"deletions_withheld={report.deletions_withheld}\n"
+        f"entities_created={m.entities_created or 0} strong_id_merges={m.strong_id_merges or 0} "
+        f"candidates={m.candidates_created or 0} identifiers_added={m.identifiers_added or 0}\n"
+        f"sparql_requests={m.http_requests or 0} "
+        f"db_size={(m.db_size_bytes or 0) / BYTES_PER_MB:.1f} MB "
+        f"duration={(m.duration_ms or 0) / 1000:.1f} s"
+    )
+
+
+def _run_sync_journalists(url: str) -> int:
+    user_agent = load_user_agent()
+    refused_backoff = load_refused_backoff(REFUSED_BACKOFF)
+    with WikidataClient(user_agent) as client, _connect(url) as conn:
+        report = sync_journalists(conn, client, refused_backoff=refused_backoff)
+    print(_format_journalists(report))
+    return 0 if report.status == "ok" else PARTIAL_EXIT
+
+
+def _format_bylines(report: BylineReport) -> str:
+    m = report.metrics
+    return (
+        f"run_id={report.run_id} status={report.status} feeds={sum(report.outcomes.values())} "
+        f"{_counts('', OUTCOMES, report.outcomes)}\n"
+        f"bylines={report.bylines} authors={report.authors} "
+        f"organisation_bylines={report.organisation_bylines}\n"
+        f"{_classified(m)}\n"
+        f"http_requests={m.http_requests or 0} "
+        f"db_size={(m.db_size_bytes or 0) / BYTES_PER_MB:.1f} MB "
+        f"duration={(m.duration_ms or 0) / 1000:.1f} s"
+    )
+
+
+def _run_sync_bylines(url: str, author_feeds: int) -> int:
+    user_agent = load_user_agent()
+    refused_backoff = load_refused_backoff(REFUSED_BACKOFF)
+    if not 1 <= author_feeds <= MAX_AUTHOR_FEEDS:
+        raise BylineInputError(f"--author-feeds must be between 1 and {MAX_AUTHOR_FEEDS}")
+    with (
+        FeedFetcher(user_agent, refused_backoff=refused_backoff, log_url=public_url) as fetcher,
+        _connect(url) as conn,
+    ):
+        report = sync_bylines(conn, fetcher, author_feeds=author_feeds)
+    print(_format_bylines(report))
+    return 0 if report.status == "ok" else PARTIAL_EXIT
+
+
 def _run_eval_sample(url: str, out: Path, strata: Path, carry_from: Path | None) -> None:
     with _connect(url) as conn:
         result = write_sample(conn, out, strata, carry_from)
@@ -314,6 +393,9 @@ def _run_refresh(url: str, limit: int, same_as: int | None) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    # httpx logs every request URL at INFO. Job logs are public (Actions) and author feed
+    # URLs carry people's names; our clients log their own redacted lines instead.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         if args.command == "eval-report":
             # Reproducible by anyone from the two files alone, without a database.
@@ -331,6 +413,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             _run_discover_dump(url, args.dump, args.created_from)
         elif args.command == "discover-newfeeds":
             return _run_discover_newfeeds(url, args.limit)
+        elif args.command == "sync-journalists":
+            return _run_sync_journalists(url)
+        elif args.command == "sync-bylines":
+            return _run_sync_bylines(url, args.author_feeds)
         elif args.command == "eval-sample":
             _run_eval_sample(url, args.out, args.strata, args.carry_from)
         else:
@@ -345,6 +431,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         DiscoveryBusy,
         DiscoveryBackoff,
         EvalInputError,
+        JournalistInputError,
+        JournalistSyncBusy,
+        BylineInputError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

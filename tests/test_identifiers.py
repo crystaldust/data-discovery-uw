@@ -5,9 +5,11 @@ import pytest
 from ddm.identifiers import (
     DDM_ENTITY_NAMESPACE,
     entity_id_for,
+    normalize_author_url,
     normalize_feed_url,
     normalize_guid,
     normalize_itunes_id,
+    normalize_qid,
 )
 
 
@@ -92,3 +94,41 @@ def test_entity_id_is_deterministic_for_the_same_source_record():
 def test_entity_id_differs_between_source_records():
     assert entity_id_for("podcastindex_dump", "42") != entity_id_for("podcastindex_dump", "43")
     assert entity_id_for("podcastindex_dump", "42") != entity_id_for("wikidata", "42")
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Q42", "Q42"),
+        (" Q42 ", "Q42"),
+        ("http://www.wikidata.org/entity/Q42", "Q42"),
+        ("https://www.wikidata.org/entity/Q1930187", "Q1930187"),
+        ("Q0", None),
+        ("Q042", None),
+        ("Q42x", None),
+        ("P42", None),
+        ("q42", None),
+        ("http://example.com/entity/Q42", None),
+        ("Q1234567890123", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_normalize_qid_accepts_only_wikidata_item_ids(raw, expected):
+    assert normalize_qid(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("https://www.theatlantic.com/author/a-b/", "theatlantic.com/author/a-b"),
+        ("http://theatlantic.com/author/a-b", "theatlantic.com/author/a-b"),
+        ("https://WWW.NYTimes.com/by/a-b", "nytimes.com/by/a-b"),
+        ("https://www2.example.com/by/a", "www2.example.com/by/a"),
+        ("ftp://www.theatlantic.com/author/a-b/", None),
+        ("not a url", None),
+        (None, None),
+    ],
+)
+def test_normalize_author_url_also_ignores_a_leading_www(raw, expected):
+    assert normalize_author_url(raw) == expected

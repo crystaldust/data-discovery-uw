@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Tech</title>
+  <rights>© Example Tech 2026</rights>
+  <author>
+    <name>Example Tech Staff</name>
+  </author>
+  <entry>
+    <title>A gadget review</title>
+    <link rel="alternate" type="text/html" href="https://tech.example.com/review"/>
+    <link rel="enclosure" href="https://tech.example.com/image.jpg"/>
+    <published>2026-10-26T09:30:00-04:00</published>
+    <updated>2026-10-26T11:00:00-04:00</updated>
+    <author>
+      <name>Blake Sample</name>
+      <uri>https://tech.example.com/authors/blake-sample</uri>
+      <email>blake@tech.example.com</email>
+    </author>
+  </entry>
+  <entry>
+    <title>No author of its own</title>
+    <link href="https://tech.example.com/news"/>
+    <updated>2026-10-25T08:00:00Z</updated>
+  </entry>
+</feed>

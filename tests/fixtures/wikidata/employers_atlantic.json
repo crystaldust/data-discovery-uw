@@ -1,0 +1,35 @@
+{
+  "head": {"vars": ["person", "personLabel", "start", "startPrecision", "end", "endPrecision"]},
+  "results": {
+    "bindings": [
+      {
+        "person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q900001"},
+        "personLabel": {"xml:lang": "en", "type": "literal", "value": "Avery Example"},
+        "start": {"datatype": "http://www.w3.org/2001/XMLSchema#dateTime", "type": "literal", "value": "2017-04-01T00:00:00Z"},
+        "startPrecision": {"datatype": "http://www.w3.org/2001/XMLSchema#integer", "type": "literal", "value": "10"}
+      },
+      {
+        "person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q900001"},
+        "personLabel": {"xml:lang": "en", "type": "literal", "value": "Avery Example"},
+        "start": {"datatype": "http://www.w3.org/2001/XMLSchema#dateTime", "type": "literal", "value": "2009-01-01T00:00:00Z"},
+        "startPrecision": {"datatype": "http://www.w3.org/2001/XMLSchema#integer", "type": "literal", "value": "9"},
+        "end": {"datatype": "http://www.w3.org/2001/XMLSchema#dateTime", "type": "literal", "value": "2012-06-15T00:00:00Z"},
+        "endPrecision": {"datatype": "http://www.w3.org/2001/XMLSchema#integer", "type": "literal", "value": "11"}
+      },
+      {
+        "person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q900002"},
+        "personLabel": {"type": "literal", "value": "Q900002"},
+        "start": {"datatype": "http://www.w3.org/2001/XMLSchema#dateTime", "type": "literal", "value": "1990-01-01T00:00:00Z"},
+        "startPrecision": {"datatype": "http://www.w3.org/2001/XMLSchema#integer", "type": "literal", "value": "7"}
+      },
+      {
+        "person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q900003"},
+        "personLabel": {"xml:lang": "en", "type": "literal", "value": "Blake Sample"}
+      },
+      {
+        "person": {"type": "uri", "value": "http://example.com/entity/Q900004"},
+        "personLabel": {"xml:lang": "en", "type": "literal", "value": "Not A Wikidata Item"}
+      }
+    ]
+  }
+}
