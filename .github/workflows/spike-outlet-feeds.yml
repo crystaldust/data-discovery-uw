@@ -1,0 +1,32 @@
+name: spike-outlet-feeds
+
+# Phase 5 spike: which outlet RSS/Atom feeds carry bylines, and what do they say about
+# their terms? Uses the project's FeedFetcher (honest User-Agent, robots.txt, stops on
+# 401/403/429). Writes counts and notices to the job summary; never prints author names.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DDM_USER_AGENT: ${{ vars.DDM_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Check settings
+        run: test -n "$DDM_USER_AGENT" || { echo "DDM_USER_AGENT is not set"; exit 1; }
+
+      - name: Install
+        run: uv sync --frozen --no-dev
+
+      - name: Probe feeds
+        shell: bash  # -o pipefail: a crash of the script fails the step despite tee
+        run: uv run --no-dev python spikes/s6_outlet_feeds.py | tee -a "$GITHUB_STEP_SUMMARY"
