@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Search</h1>
+<form method="get" action="/" hx-get="/search" hx-target="#results" hx-push-url="true">
+  <div class="grid">
+    <label>Name <input name="q" value="{{ form.q or '' }}" maxlength="{{ max_chars }}" placeholder="e.g. marketing"></label>
+    <label>Type
+      <select name="entity_type">
+        <option value="">all</option>
+        {% for t in ["podcast", "journalist"] %}
+        <option value="{{ t }}" {% if form.entity_type == t %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Language <input name="language" value="{{ form.language or '' }}" maxlength="10" placeholder="en"></label>
+  </div>
+  <div class="grid">
+    <label>Category <input name="category" value="{{ form.category or '' }}" maxlength="{{ max_chars }}" placeholder="marketing"></label>
+    <label>Outlet <input name="outlet" value="{{ form.outlet or '' }}" maxlength="{{ max_chars }}" placeholder="The Atlantic"></label>
+    <label>Active within
+      <select name="active_within_days">
+        <option value="">any time</option>
+        {% for d in windows %}
+        <option value="{{ d }}" {% if form.active_within_days == d|string %}selected{% endif %}>{{ d }} days</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>First seen
+      <select name="first_seen">
+        <option value="">all</option>
+        {% for k in ["historical", "discovered"] %}
+        <option value="{{ k }}" {% if form.first_seen == k %}selected{% endif %}>{{ k }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <label><input type="checkbox" name="has_contact" value="1" {% if form.has_contact %}checked{% endif %}> Has a contact route</label>
+  <button type="submit">Search</button>
+  <a href="/export.csv?{{ export_query }}" role="button" class="secondary">Export CSV (current filters)</a>
+</form>
+<div id="results">
+  {% include "_results.html" %}
+</div>
+{% endblock %}

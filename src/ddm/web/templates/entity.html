@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% from "_status.html" import checked, activity %}
+{% block title %}{{ d.summary.display_name or "Entity" }} · Data Discovery Demo{% endblock %}
+{% block content %}
+{% set s = d.summary %}
+<hgroup>
+  <h1>{{ s.display_name or "(no name)" }}</h1>
+  <p>{{ s.entity_type }} · first seen: {{ s.first_seen_kind }}</p>
+</hgroup>
+<p>Latest activity: {{ activity(s) }} · Verification: {{ checked(s) }}
+   {% if s.language %}· Language: {{ s.language }}{% endif %}
+   {% if s.categories %}· Categories: {{ s.categories | join(", ") }}{% endif %}
+   {% if s.outlets %}· Outlets: {{ s.outlets | join(", ") }}{% endif %}</p>
+
+<h2>Identifiers</h2>
+<figure class="overflow-auto"><table>
+  <thead><tr><th>Kind</th><th>Value</th><th>Source</th><th>Added</th></tr></thead>
+  <tbody>
+  {% for i in d.identifiers %}
+    <tr><td>{{ i.kind }}</td><td>{{ i.value }}</td><td>{{ i.source }}</td>
+        <td>run {{ i.added_run }} · {{ i.added_at | day }}</td></tr>
+  {% else %}<tr><td colspan="4">None.</td></tr>{% endfor %}
+  </tbody>
+</table></figure>
+
+<h2>Source records</h2>
+<div class="grid">
+{% for r in d.records %}
+  <article>
+    <header>
+      <strong>{{ r.source }}</strong> ·
+      {% if r.provenance == "observed" %}✓ checked {{ r.last_seen_at | day }}{% else %}historical (imported {{ r.first_seen_at | day }}){% endif %}
+      {% if r.deleted_at %}· <mark>removed {{ r.deleted_at | day }}</mark>{% endif %}
+    </header>
+    <p><b>{{ r.display_name or "(no name)" }}</b></p>
+    <dl>
+    {% for key, value in r.attrs.items() %}
+      <dt>{{ key }}</dt>
+      <dd>{% set url = value | web_url %}{% if url %}<a href="{{ url }}" rel="noopener noreferrer nofollow" target="_blank">{{ url }}</a>{% else %}{{ value | attr_text }}{% endif %}</dd>
+    {% endfor %}
+    </dl>
+  </article>
+{% endfor %}
+</div>
+
+<h2>Contact routes</h2>
+<figure class="overflow-auto"><table>
+  <thead><tr><th>Type</th><th>Value</th><th>Syntax</th><th>Deliverability</th><th>Affiliation</th>
+             <th>Purpose</th><th>Source</th><th>Checked</th></tr></thead>
+  <tbody>
+  {% for c in d.contact_routes %}
+    <tr>
+      <td>{{ c.route_type }}</td>
+      <td>{% set url = c.display_value | web_url %}{% if url %}<a href="{{ url }}" rel="noopener noreferrer nofollow" target="_blank">{{ url }}</a>{% else %}{{ c.display_value }}{% endif %}</td>
+      <td>{{ "valid" if c.syntax_valid else "invalid" }}</td>
+      <td>{{ c.deliverability_status }}</td>
+      <td>{{ c.affiliation_status }} <small>({{ c.affiliation_basis }})</small></td>
+      <td>{{ c.purpose }} <small>({{ c.purpose_basis }})</small></td>
+      <td>{{ c.source }}</td>
+      <td>{{ c.checked_at | day }}</td>
+    </tr>
+  {% else %}<tr><td colspan="8">None.</td></tr>{% endfor %}
+  </tbody>
+</table></figure>
+
+<h2>Observation history <small>(latest {{ d.observations | length }})</small></h2>
+<figure class="overflow-auto"><table>
+  <thead><tr><th>Date</th><th>Source</th><th>Kind</th><th>Change</th><th>Fields changed</th></tr></thead>
+  <tbody>
+  {% for o in d.observations %}
+    <tr><td>{{ o.observed_at | day }}</td><td>{{ o.source }}</td><td>{{ o.provenance }}</td>
+        <td>{{ o.change_kind }}</td><td>{{ o.changed_fields | join(", ") or "—" }}</td></tr>
+  {% else %}<tr><td colspan="5">None.</td></tr>{% endfor %}
+  </tbody>
+</table></figure>
+
+<h2>Discoveries and candidate matches</h2>
+<ul>
+{% for x in d.discoveries %}
+  <li>Run {{ x.run_id }} ({{ x.run_at | day }}), {{ x.source }}: <b>{{ x.classification }}</b>
+      — record “{{ x.record_name or "(no name)" }}”
+      {% if x.matched_entity_id %}matched <a href="/entities/{{ x.matched_entity_id }}">{{ x.matched_name or "(no name)" }}</a>{% endif %}
+      by {{ x.method }}{% if x.score is not none %}, score {{ "%.2f" | format(x.score) }}{% endif %}</li>
+{% endfor %}
+{% for c in d.candidates %}
+  <li>Pending review ({{ c.source }}): “{{ c.record_name or "(no name)" }}” may be
+      {% if c.other_id %}<a href="/entities/{{ c.other_id }}">{{ c.other_name or "(no name)" }}</a>{% else %}{{ c.other_name or "(no name)" }}{% endif %}
+      — {{ c.method }}, score {{ "%.2f" | format(c.score) }}. Never merged automatically.</li>
+{% endfor %}
+{% if not d.discoveries and not d.candidates %}<li>None.</li>{% endif %}
+</ul>
+{% endblock %}

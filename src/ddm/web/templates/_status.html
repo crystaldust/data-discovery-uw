@@ -1,0 +1,18 @@
+{# Verification status in words, not only colour (data quality rule 2). #}
+{% macro checked(s) -%}
+  {%- if s.last_checked_at -%}
+    ✓ checked {{ s.last_checked_at | day }}
+  {%- elif s.imported_at -%}
+    historical (imported {{ s.imported_at | day }})
+  {%- else -%}
+    not checked
+  {%- endif -%}
+{%- endmacro %}
+{% macro activity(s) -%}
+  {%- if s.last_activity_at -%}
+    {{ s.last_activity_at | day }} · {{ s.activity_status }}
+    <small>({{ "from our fetch" if s.activity_basis == "observed" else "from catalogue" }})</small>
+  {%- else -%}
+    unknown
+  {%- endif -%}
+{%- endmacro %}

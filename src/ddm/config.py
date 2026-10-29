@@ -11,6 +11,7 @@ NEON_POOLER_SUFFIX = "-pooler"
 BROWSER_UA_TOKENS = ("mozilla/", "applewebkit/", "chrome/", "safari/", "gecko/", "firefox/")
 UA_CONTACT_MARKERS = ("+mailto:", "+http")
 MAX_REFUSED_BACKOFF_DAYS = 365
+MIN_SESSION_SECRET_CHARS = 32
 
 
 class ConfigError(RuntimeError):
@@ -23,6 +24,15 @@ class PodcastIndexConfig:
     api_key: str = field(repr=False)
     api_secret: str = field(repr=False)
     user_agent: str
+
+
+@dataclass(frozen=True)
+class WebConfig:
+    readonly_db_url: str = field(repr=False)
+    session_secret: str = field(repr=False)
+    demo_user: str
+    demo_password_hash: str = field(repr=False)
+    secure_cookies: bool = True
 
 
 def _require(name: str) -> str:
@@ -65,17 +75,24 @@ def load_refused_backoff(default: timedelta) -> timedelta:
     return timedelta(days=int(value))
 
 
-def load_demo_mcp_token() -> str:
-    return _require("DEMO_MCP_TOKEN")
-
-
 def load_database_url() -> str:
     """Direct (non-pooled) owner connection used by migrations and import jobs."""
     return _require("DATABASE_URL")
 
 
-def load_readonly_database_url() -> str | None:
-    return os.environ.get("DATABASE_URL_READONLY", "").strip() or None
+def load_web_config() -> WebConfig:
+    """Everything the web app needs; all required, so a misconfigured deploy fails at start."""
+    secret = _require("SESSION_SECRET")
+    if len(secret) < MIN_SESSION_SECRET_CHARS:
+        raise ConfigError(f"SESSION_SECRET must be at least {MIN_SESSION_SECRET_CHARS} characters")
+    return WebConfig(
+        readonly_db_url=_require("DATABASE_URL_READONLY"),
+        session_secret=secret,
+        demo_user=_require("DEMO_LOGIN_USER"),
+        demo_password_hash=_require("DEMO_LOGIN_PASSWORD_HASH"),
+        # Only for running on plain http://localhost; every deploy is https.
+        secure_cookies=os.environ.get("DDM_LOCAL_HTTP", "").strip() != "1",
+    )
 
 
 def pooled_neon_url(direct_url: str) -> str:

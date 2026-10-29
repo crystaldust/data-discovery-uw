@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Metrics · Data Discovery Demo{% endblock %}
+{% block content %}
+<h1>Metrics</h1>
+<p>Search index refreshed {{ m.search_refreshed_at | day }} ·
+   database {{ "%.0f" | format(m.db_size_bytes / 1048576) }} MB ·
+   match accuracy: <a href="{{ eval_report_url }}" rel="noopener noreferrer" target="_blank">hand-labelled evaluation report</a></p>
+
+<h2>Entities</h2>
+<figure class="overflow-auto"><table>
+  <thead><tr><th>Type</th><th>First seen</th><th>Entities</th></tr></thead>
+  <tbody>{% for c in m.entities %}<tr><td>{{ c.entity_type }}</td><td>{{ c.first_seen_kind }}</td><td>{{ c.entities }}</td></tr>{% endfor %}</tbody>
+</table></figure>
+
+<h2>Verification freshness</h2>
+<figure class="overflow-auto"><table>
+  <thead><tr><th>Source</th><th>Live records</th><th>Checked in 7 days</th><th>Checked in 30 days</th></tr></thead>
+  <tbody>{% for f in m.freshness %}
+    <tr><td>{{ f.source }}</td><td>{{ f.records }}</td>
+        <td>{{ f.verified_7d }} ({{ "%.1f" | format(100 * f.verified_7d / f.records) if f.records else 0 }}%)</td>
+        <td>{{ f.verified_30d }} ({{ "%.1f" | format(100 * f.verified_30d / f.records) if f.records else 0 }}%)</td></tr>
+  {% endfor %}</tbody>
+</table></figure>
+
+<h2>Contact route coverage <small>(counts only)</small></h2>
+<figure class="overflow-auto"><table>
+  <thead><tr><th>Type</th><th>Affiliation</th><th>Purpose</th><th>Routes</th></tr></thead>
+  <tbody>{% for r in m.contact_routes %}<tr><td>{{ r.route_type }}</td><td>{{ r.affiliation_status }}</td><td>{{ r.purpose }}</td><td>{{ r.routes }}</td></tr>{% endfor %}</tbody>
+</table></figure>
+
+<h2>Discoveries</h2>
+<figure class="overflow-auto"><table>
+  <thead><tr><th>Source</th><th>Classification</th><th>Records</th></tr></thead>
+  <tbody>{% for x in m.discoveries %}<tr><td>{{ x.source }}</td><td>{{ x.classification }}</td><td>{{ x.records }}</td></tr>{% endfor %}</tbody>
+</table></figure>
+<p>Candidate matches waiting for review: {{ m.pending_candidates }} (never merged automatically).</p>
+
+<h2>Latest runs</h2>
+<figure class="overflow-auto"><table>
+  <thead><tr><th>Run</th><th>Source</th><th>Kind</th><th>Status</th><th>Finished</th>
+             <th>New</th><th>Changed</th><th>Deleted</th><th>HTTP requests</th><th>Duration</th></tr></thead>
+  <tbody>{% for r in m.recent_runs %}
+    <tr><td>{{ r.run_id }}</td><td>{{ r.source }}</td><td>{{ r.run_kind }}</td><td>{{ r.status }}</td>
+        <td>{{ r.finished_at | day }}</td><td>{{ r.rows_new if r.rows_new is not none else "—" }}</td>
+        <td>{{ r.rows_changed if r.rows_changed is not none else "—" }}</td>
+        <td>{{ r.rows_deleted if r.rows_deleted is not none else "—" }}</td>
+        <td>{{ r.http_requests if r.http_requests is not none else "—" }}</td>
+        <td>{{ "%.1f s" | format(r.duration_ms / 1000) if r.duration_ms is not none else "—" }}</td></tr>
+  {% endfor %}</tbody>
+</table></figure>
+{% endblock %}

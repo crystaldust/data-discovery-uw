@@ -6,11 +6,10 @@ from ddm.config import (
     ConfigError,
     PodcastIndexConfig,
     load_database_url,
-    load_demo_mcp_token,
     load_podcastindex_config,
-    load_readonly_database_url,
     load_refused_backoff,
     load_user_agent,
+    load_web_config,
     pooled_neon_url,
 )
 
@@ -66,29 +65,58 @@ def test_values_are_stripped(full_env):
     assert load_podcastindex_config().api_key == "padded"
 
 
-def test_demo_mcp_token_is_required(monkeypatch):
-    monkeypatch.delenv("DEMO_MCP_TOKEN", raising=False)
-
-    with pytest.raises(ConfigError, match="DEMO_MCP_TOKEN"):
-        load_demo_mcp_token()
-
-
-def test_demo_mcp_token_is_returned_stripped(monkeypatch):
-    monkeypatch.setenv("DEMO_MCP_TOKEN", " token-value ")
-
-    assert load_demo_mcp_token() == "token-value"
+WEB_ENV = {
+    "DATABASE_URL_READONLY": "postgresql://reader:pw@host/db",
+    "SESSION_SECRET": "s" * 32,
+    "DEMO_LOGIN_USER": "demo",
+    "DEMO_LOGIN_PASSWORD_HASH": "scrypt$16384$8$1$salt$hash",
+}
 
 
-def test_readonly_database_url_is_optional(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL_READONLY", raising=False)
+@pytest.fixture
+def web_env(monkeypatch):
+    for name, value in WEB_ENV.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("DDM_LOCAL_HTTP", raising=False)
+    return monkeypatch
 
-    assert load_readonly_database_url() is None
+
+def test_web_config_reads_every_setting(web_env):
+    config = load_web_config()
+
+    assert config.readonly_db_url == WEB_ENV["DATABASE_URL_READONLY"]
+    assert config.demo_user == "demo"
+    assert config.secure_cookies is True
 
 
-def test_readonly_database_url_is_returned_when_set(monkeypatch):
-    monkeypatch.setenv("DATABASE_URL_READONLY", "postgresql://reader@host/db")
+@pytest.mark.parametrize("name", sorted(WEB_ENV))
+def test_web_config_names_a_missing_variable(web_env, name):
+    web_env.delenv(name)
 
-    assert load_readonly_database_url() == "postgresql://reader@host/db"
+    with pytest.raises(ConfigError, match=name):
+        load_web_config()
+
+
+def test_a_short_session_secret_is_refused_without_showing_it(web_env):
+    web_env.setenv("SESSION_SECRET", "short-secret-value")
+
+    with pytest.raises(ConfigError, match="SESSION_SECRET") as error:
+        load_web_config()
+
+    assert "short-secret-value" not in str(error.value)
+
+
+def test_web_config_repr_hides_the_secrets(web_env):
+    shown = repr(load_web_config())
+
+    assert "pw@host" not in shown and "s" * 32 not in shown and "scrypt" not in shown
+    assert "demo" in shown
+
+
+def test_local_http_turns_secure_cookies_off(web_env):
+    web_env.setenv("DDM_LOCAL_HTTP", "1")
+
+    assert load_web_config().secure_cookies is False
 
 
 def test_database_url_is_required_and_error_names_only_the_variable(monkeypatch):
