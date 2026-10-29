@@ -61,3 +61,8 @@ jobs:
           else
             uv run --no-dev ddm refresh-podcasts --limit "$LIMIT"
           fi
+
+      # Also after a partial run: whatever it committed should be searchable.
+      - name: Refresh search view
+        if: ${{ !cancelled() }}
+        run: uv run --no-dev ddm refresh-search

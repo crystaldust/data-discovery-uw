@@ -1,0 +1,45 @@
+name: refresh-search
+
+# Apply pending migrations and rebuild the search view (the other job workflows do this
+# as their last step). Touches only our own database: no outbound requests to sources.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-search
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Check settings and hide the database host from the public log
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          test -n "$DATABASE_URL" || { echo "DATABASE_URL is not set"; exit 1; }
+          host=$(python3 -c 'import os, urllib.parse; print(urllib.parse.urlsplit(os.environ["DATABASE_URL"]).hostname or "")')
+          test -n "$host" || { echo "DATABASE_URL has no host"; exit 1; }
+          echo "::add-mask::$host"
+
+      - name: Install
+        run: uv sync --frozen --no-dev
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run --no-dev ddm migrate
+
+      - name: Refresh search view
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run --no-dev ddm refresh-search

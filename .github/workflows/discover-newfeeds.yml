@@ -56,3 +56,8 @@ jobs:
         # Exit code 3 means the source refused or was down: the run is 'partial' and its
         # committed batches are kept. Show it as a failed step so it gets noticed.
         run: uv run --no-dev ddm discover-newfeeds --limit "$LIMIT"
+
+      # Also after a partial run: whatever it committed should be searchable.
+      - name: Refresh search view
+        if: ${{ !cancelled() }}
+        run: uv run --no-dev ddm refresh-search
