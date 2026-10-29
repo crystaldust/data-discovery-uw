@@ -2,6 +2,8 @@
 
 import os
 import sqlite3
+import time
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -142,3 +144,46 @@ def fresh_db(pg_url):
     # Same mode as the CLI: autocommit, with explicit conn.transaction() blocks.
     with psycopg.connect(pg_url, autocommit=True) as conn:
         yield conn
+
+
+# The read-only role the web app uses on Neon, recreated locally: cluster-wide, so it
+# survives the schema wipe, while the schema grants and default privileges are redone
+# after each wipe, before migrating, as on Neon.
+READER_ROLE = "ddm_reader"
+READER_PASSWORD = "ddm-reader-local-only"
+ENSURE_READER = f"""DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{READER_ROLE}') THEN
+    CREATE ROLE {READER_ROLE} LOGIN PASSWORD '{READER_PASSWORD}';
+  ELSE
+    ALTER ROLE {READER_ROLE} LOGIN PASSWORD '{READER_PASSWORD}';
+  END IF;
+END $$"""  # noqa: S608 - module constants only
+
+
+@pytest.fixture
+def reader_db(fresh_db):
+    """The wiped test database with the read-only role set up; migrate after this."""
+    fresh_db.execute(ENSURE_READER)
+    fresh_db.execute(f"GRANT USAGE ON SCHEMA public TO {READER_ROLE}")
+    fresh_db.execute(
+        f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO {READER_ROLE}"
+    )
+    return fresh_db
+
+
+@pytest.fixture
+def reader_url(pg_url) -> str:
+    """Same host and database as the test database, as the read-only role."""
+    parts = urlsplit(pg_url)
+    host = parts.hostname if ":" not in (parts.hostname or "") else f"[{parts.hostname}]"
+    netloc = f"{READER_ROLE}:{READER_PASSWORD}@{host}" + (f":{parts.port}" if parts.port else "")
+    return parts._replace(netloc=netloc).geturl()
+
+
+@pytest.fixture
+def fresh_minute():
+    """Metering counts per clock minute: start a burst of calls early in a minute, so it
+    stays inside one window. The local database and this process share a clock."""
+    second = datetime.now().second
+    if second > 45:
+        time.sleep(61 - second)

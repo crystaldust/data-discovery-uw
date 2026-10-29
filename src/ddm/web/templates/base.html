@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false, "allowScriptTags": false}'>
+  <title>{% block title %}Data Discovery Demo{% endblock %}</title>
+  <link rel="stylesheet" href="/static/pico.min.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="container">
+    <nav>
+      <ul><li><strong>Data Discovery Demo</strong></li></ul>
+      {% if user %}
+      <ul>
+        <li><a href="/">Search</a></li>
+        <li><a href="/discoveries">Discoveries</a></li>
+        <li><a href="/metrics">Metrics</a></li>
+        <li><a href="/docs">API</a></li>
+        <li>
+          <form method="post" action="/logout">
+            <button type="submit" class="secondary outline">Log out</button>
+          </form>
+        </li>
+      </ul>
+      {% endif %}
+    </nav>
+  </header>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="container">
+    <small>
+      Read-only demo. Contact emails are always masked.
+      <b>Checked</b> = fetched by this system on that date.
+      <b>Historical</b> = from a catalogue import, not re-checked.
+      Nothing here says a person may be contacted.
+    </small>
+  </footer>
+</body>
+</html>

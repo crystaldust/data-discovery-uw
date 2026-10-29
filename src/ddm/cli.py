@@ -1,5 +1,5 @@
 """Command line entry point: `ddm migrate`, `ddm import-baseline`, `ddm refresh-podcasts`,
-discovery, evaluation and the journalist jobs.
+discovery, evaluation, the journalist jobs, the search view and API keys.
 
 Jobs use the direct (non-pooled) DATABASE_URL: temp tables and advisory locks do not
 survive PgBouncer transaction pooling. Output names the database host at most, never
@@ -7,7 +7,9 @@ the URL or credentials.
 """
 
 import argparse
+import getpass
 import logging
+import os
 import sqlite3
 import sys
 import webbrowser
@@ -18,6 +20,8 @@ from urllib.parse import urlsplit
 
 import psycopg
 
+from ddm.access.keys import DEFAULT_RATE_LIMIT, create_key, revoke_key
+from ddm.access.passwords import MIN_PASSWORD_CHARS, hash_password
 from ddm.config import (
     NEON_POOLER_SUFFIX,
     ConfigError,
@@ -58,6 +62,7 @@ from ddm.ingest.wikidata_sync import (
     JournalistSyncReport,
     sync_journalists,
 )
+from ddm.query.refresh import refresh_search
 from ddm.sources.outlet_rss import public_url
 from ddm.sources.podcastindex import PodcastIndexClient
 from ddm.sources.rss_fetch import REFUSED_BACKOFF, FeedFetcher
@@ -73,11 +78,14 @@ ACTIVITY = ("active", "dormant", "dead", "unknown")
 EVAL_DIR = Path("eval")
 # A run that stopped early (refused or source down): not a failure, not a success either.
 PARTIAL_EXIT = 3
+MAX_RATE_LIMIT = 10_000
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ddm", description=__doc__.splitlines()[0])
-    commands = parser.add_subparsers(dest="command", required=True)
+class AccessInputError(ValueError):
+    """A key or password command was given an unusable value."""
+
+
+def _add_import_commands(commands) -> None:
     commands.add_parser("migrate", help="apply pending SQL migrations")
     baseline = commands.add_parser(
         "import-baseline", help="import the historical podcast baseline from the dump"
@@ -89,15 +97,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=BASELINE_CUTOFF,
         help="feeds created before this date (YYYY-MM-DD) form the baseline",
     )
-    refresh = commands.add_parser(
-        "refresh-podcasts", help="re-fetch baseline RSS feeds, least recently checked first"
-    )
-    refresh.add_argument(
-        "--limit", type=int, default=DEFAULT_LIMIT, help=f"feeds to fetch (1-{MAX_LIMIT})"
-    )
-    refresh.add_argument(
-        "--same-as", type=int, help="re-fetch exactly the feeds of this earlier refresh run"
-    )
     discover = commands.add_parser(
         "discover-dump", help="classify feeds the dump added since the baseline cutoff"
     )
@@ -107,6 +106,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=date.fromisoformat,
         default=BASELINE_CUTOFF,
         help="feeds created on or after this date (YYYY-MM-DD) are candidates",
+    )
+
+
+def _add_sync_commands(commands) -> None:
+    refresh = commands.add_parser(
+        "refresh-podcasts", help="re-fetch baseline RSS feeds, least recently checked first"
+    )
+    refresh.add_argument(
+        "--limit", type=int, default=DEFAULT_LIMIT, help=f"feeds to fetch (1-{MAX_LIMIT})"
+    )
+    refresh.add_argument(
+        "--same-as", type=int, help="re-fetch exactly the feeds of this earlier refresh run"
     )
     newfeeds = commands.add_parser(
         "discover-newfeeds", help="classify feeds Podcast Index added since the last run"
@@ -127,6 +138,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_AUTHOR_FEEDS,
         help=f"per-author feeds to read besides the section feeds (1-{MAX_AUTHOR_FEEDS})",
     )
+    commands.add_parser("refresh-search", help="rebuild the search view after a job run")
+
+
+def _add_eval_commands(commands) -> None:
     sample = commands.add_parser("eval-sample", help="draw the pairs to label by hand")
     sample.add_argument("--out", type=Path, default=EVAL_DIR / "labels.csv")
     sample.add_argument("--strata", type=Path, default=EVAL_DIR / "strata.json")
@@ -147,6 +162,34 @@ def build_parser() -> argparse.ArgumentParser:
     label.add_argument("--labels", type=Path, default=EVAL_DIR / "labels.csv")
     label.add_argument("--port", type=int, default=LABEL_PORT, help="local port (127.0.0.1)")
     label.add_argument("--no-browser", action="store_true", help="only print the address")
+
+
+def _add_access_commands(commands) -> None:
+    create = commands.add_parser(
+        "create-api-key", help="create an API/MCP key and write it to a new file (mode 0600)"
+    )
+    create.add_argument("--label", required=True, help="what the key is for, e.g. demo")
+    create.add_argument(
+        "--rate-limit",
+        type=int,
+        default=DEFAULT_RATE_LIMIT,
+        help=f"calls per minute across API and MCP (1-{MAX_RATE_LIMIT})",
+    )
+    create.add_argument("--out", type=Path, required=True, help="new file to write the key to")
+    revoke = commands.add_parser("revoke-api-key", help="revoke an API/MCP key by id")
+    revoke.add_argument("key_id", type=int)
+    commands.add_parser(
+        "hash-password", help="read the demo password twice and print its scrypt hash"
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="ddm", description=__doc__.splitlines()[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    _add_import_commands(commands)
+    _add_sync_commands(commands)
+    _add_eval_commands(commands)
+    _add_access_commands(commands)
     return parser
 
 
@@ -390,6 +433,101 @@ def _run_refresh(url: str, limit: int, same_as: int | None) -> None:
     print(_format_refresh(report))
 
 
+def _run_refresh_search(url: str) -> None:
+    with _connect(url) as conn:
+        rows = refresh_search(conn)
+    print(f"search view refreshed rows={rows}")
+
+
+def _write_new_secret_file(path: Path, text: str) -> None:
+    """Owner-only, and never over an existing file."""
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(text + "\n")
+
+
+def _run_create_api_key(url: str, label: str, rate_limit: int, out: Path) -> None:
+    if not label.strip():
+        raise AccessInputError("--label must not be empty")
+    if not 1 <= rate_limit <= MAX_RATE_LIMIT:
+        raise AccessInputError(f"--rate-limit must be between 1 and {MAX_RATE_LIMIT}")
+    if out.exists():
+        raise AccessInputError(f"{out} already exists; choose a new file")
+    if not out.parent.is_dir():
+        raise FileNotFoundError(f"directory not found: {out.parent}")
+    with _connect(url) as conn, conn.transaction():
+        key_id, key = create_key(conn, label.strip(), rate_limit)
+        # Inside the transaction: if the file cannot be written, no key is left behind.
+        _write_new_secret_file(out, key)
+    # The key itself is never printed.
+    print(f"key_id={key_id} rate_limit={rate_limit} written to {out}")
+
+
+def _run_revoke_api_key(url: str, key_id: int) -> None:
+    with _connect(url) as conn:
+        if not revoke_key(conn, key_id):
+            raise AccessInputError(f"no live key with id {key_id}")
+    print(f"key_id={key_id} revoked")
+
+
+def _run_hash_password() -> None:
+    password = getpass.getpass("demo password: ")
+    if len(password) < MIN_PASSWORD_CHARS:
+        raise AccessInputError(f"use at least {MIN_PASSWORD_CHARS} characters")
+    if getpass.getpass("again: ") != password:
+        raise AccessInputError("the two entries differ")
+    print(hash_password(password))
+
+
+def _run_with_database(args: argparse.Namespace, url: str) -> int:
+    handlers = {
+        "migrate": lambda: _run_migrate(url),
+        "import-baseline": lambda: _run_import_baseline(url, args.dump, args.cutoff),
+        "discover-dump": lambda: _run_discover_dump(url, args.dump, args.created_from),
+        "discover-newfeeds": lambda: _run_discover_newfeeds(url, args.limit),
+        "sync-journalists": lambda: _run_sync_journalists(url),
+        "sync-bylines": lambda: _run_sync_bylines(url, args.author_feeds),
+        "eval-sample": lambda: _run_eval_sample(url, args.out, args.strata, args.carry_from),
+        "refresh-podcasts": lambda: _run_refresh(url, args.limit, args.same_as),
+        "refresh-search": lambda: _run_refresh_search(url),
+        "create-api-key": lambda: _run_create_api_key(url, args.label, args.rate_limit, args.out),
+        "revoke-api-key": lambda: _run_revoke_api_key(url, args.key_id),
+    }
+    return handlers[args.command]() or 0
+
+
+def _run_command(args: argparse.Namespace) -> int:
+    if args.command == "eval-report":
+        # Reproducible by anyone from the two files alone, without a database.
+        _run_eval_report(args.labels, args.strata, args.out)
+        return 0
+    if args.command == "label":
+        _run_label(args.labels, args.port, not args.no_browser)
+        return 0
+    if args.command == "hash-password":
+        _run_hash_password()
+        return 0
+    return _run_with_database(args, load_database_url())
+
+
+USER_ERRORS = (
+    ConfigError,
+    MigrationError,
+    FileNotFoundError,
+    FileExistsError,
+    RefreshBusy,
+    RefreshInputError,
+    DiscoveryInputError,
+    DiscoveryBusy,
+    DiscoveryBackoff,
+    EvalInputError,
+    JournalistInputError,
+    JournalistSyncBusy,
+    BylineInputError,
+    AccessInputError,
+)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -397,51 +535,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     # URLs carry people's names; our clients log their own redacted lines instead.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
-        if args.command == "eval-report":
-            # Reproducible by anyone from the two files alone, without a database.
-            _run_eval_report(args.labels, args.strata, args.out)
-            return 0
-        if args.command == "label":
-            _run_label(args.labels, args.port, not args.no_browser)
-            return 0
-        url = load_database_url()
-        if args.command == "migrate":
-            _run_migrate(url)
-        elif args.command == "import-baseline":
-            _run_import_baseline(url, args.dump, args.cutoff)
-        elif args.command == "discover-dump":
-            _run_discover_dump(url, args.dump, args.created_from)
-        elif args.command == "discover-newfeeds":
-            return _run_discover_newfeeds(url, args.limit)
-        elif args.command == "sync-journalists":
-            return _run_sync_journalists(url)
-        elif args.command == "sync-bylines":
-            return _run_sync_bylines(url, args.author_feeds)
-        elif args.command == "eval-sample":
-            _run_eval_sample(url, args.out, args.strata, args.carry_from)
-        else:
-            _run_refresh(url, args.limit, args.same_as)
-    except (
-        ConfigError,
-        MigrationError,
-        FileNotFoundError,
-        RefreshBusy,
-        RefreshInputError,
-        DiscoveryInputError,
-        DiscoveryBusy,
-        DiscoveryBackoff,
-        EvalInputError,
-        JournalistInputError,
-        JournalistSyncBusy,
-        BylineInputError,
-    ) as exc:
+        return _run_command(args)
+    except USER_ERRORS as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except (psycopg.Error, sqlite3.Error) as exc:
         # Driver messages can echo parts of the connection string; print the class only.
         print(f"error: database operation failed ({type(exc).__name__})", file=sys.stderr)
         return 1
-    return 0
 
 
 if __name__ == "__main__":

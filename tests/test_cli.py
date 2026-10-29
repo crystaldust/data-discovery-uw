@@ -102,7 +102,7 @@ def test_migrate_then_import_twice_reports_skip(monkeypatch, capsys, fresh_db, p
 
     out = capsys.readouterr().out
     assert "applied version=1 name=extensions_and_runs" in out
-    assert "schema up to date version=5" in out
+    assert "schema up to date version=6" in out
     assert "rows_in=3 rejected=0 new=3 changed=0 unchanged=0" in out
     assert "entities_created=2" in out
     assert "strong_id_merges=1" in out
@@ -588,3 +588,119 @@ def test_http_client_request_lines_stay_out_of_job_logs(monkeypatch):
     main(["migrate"])
 
     assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
+
+
+def test_parser_reads_the_access_commands(tmp_path):
+    parser = build_parser()
+
+    create = parser.parse_args(["create-api-key", "--label", "demo", "--out", "k.txt"])
+    revoke = parser.parse_args(["revoke-api-key", "7"])
+
+    assert (create.label, create.rate_limit, str(create.out)) == ("demo", 60, "k.txt")
+    assert revoke.key_id == 7
+    assert parser.parse_args(["hash-password"]).command == "hash-password"
+    assert parser.parse_args(["refresh-search"]).command == "refresh-search"
+
+
+@pytest.mark.integration
+def test_refresh_search_reports_the_row_count(monkeypatch, capsys, fresh_db, pg_url):
+    monkeypatch.setenv("DATABASE_URL", pg_url)
+    assert main(["migrate"]) == 0
+
+    assert main(["refresh-search"]) == 0
+
+    assert "search view refreshed rows=0" in capsys.readouterr().out
+
+
+@pytest.mark.integration
+def test_create_api_key_writes_an_owner_only_file_and_never_prints_the_key(
+    monkeypatch, capsys, fresh_db, pg_url, tmp_path
+):
+    monkeypatch.setenv("DATABASE_URL", pg_url)
+    assert main(["migrate"]) == 0
+    out = tmp_path / "demo-key.txt"
+
+    assert main(["create-api-key", "--label", "demo", "--out", str(out)]) == 0
+
+    key = out.read_text().strip()
+    printed = "".join(capsys.readouterr())
+    assert key.startswith("ddm_") and key not in printed
+    assert "key_id=1" in printed
+    assert out.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.integration
+def test_create_api_key_refuses_to_overwrite_and_leaves_no_key(
+    monkeypatch, capsys, fresh_db, pg_url, tmp_path
+):
+    monkeypatch.setenv("DATABASE_URL", pg_url)
+    assert main(["migrate"]) == 0
+    out = tmp_path / "taken.txt"
+    out.write_text("keep me")
+
+    assert main(["create-api-key", "--label", "demo", "--out", str(out)]) == 1
+
+    assert out.read_text() == "keep me"
+    assert "already exists" in capsys.readouterr().err
+    assert fresh_db.execute("SELECT count(*) FROM api_keys").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--label", " "], "--label"),
+        (["--label", "demo", "--rate-limit", "0"], "--rate-limit"),
+    ],
+)
+def test_create_api_key_validates_before_connecting(monkeypatch, capsys, tmp_path, args, message):
+    monkeypatch.setenv("DATABASE_URL", SECRET_URL)
+
+    assert main(["create-api-key", *args, "--out", str(tmp_path / "k.txt")]) == 1
+
+    assert message in capsys.readouterr().err
+
+
+def test_create_api_key_needs_an_existing_directory(monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("DATABASE_URL", SECRET_URL)
+
+    out = tmp_path / "missing" / "k.txt"
+    assert main(["create-api-key", "--label", "demo", "--out", str(out)]) == 1
+
+    assert "directory not found" in capsys.readouterr().err
+
+
+@pytest.mark.integration
+def test_revoke_api_key_revokes_once(monkeypatch, capsys, fresh_db, pg_url, tmp_path):
+    monkeypatch.setenv("DATABASE_URL", pg_url)
+    assert main(["migrate"]) == 0
+    assert main(["create-api-key", "--label", "demo", "--out", str(tmp_path / "k")]) == 0
+
+    assert main(["revoke-api-key", "1"]) == 0
+    assert main(["revoke-api-key", "1"]) == 1
+
+    assert "no live key with id 1" in capsys.readouterr().err
+
+
+def test_hash_password_prints_a_verifiable_hash_but_not_the_password(monkeypatch, capsys):
+    from ddm.access.passwords import verify_password
+
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": "a long demo password")
+
+    assert main(["hash-password"]) == 0
+
+    printed = capsys.readouterr().out.strip()
+    assert verify_password("a long demo password", printed)
+    assert "a long demo password" not in printed
+
+
+@pytest.mark.parametrize(
+    ("entries", "message"),
+    [(["short"], "at least"), (["a long demo password", "different entry!"], "differ")],
+)
+def test_hash_password_refuses_short_or_mismatched_entries(monkeypatch, capsys, entries, message):
+    answers = iter(entries)
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": next(answers))
+
+    assert main(["hash-password"]) == 1
+
+    assert message in capsys.readouterr().err

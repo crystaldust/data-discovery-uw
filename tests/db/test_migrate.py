@@ -23,6 +23,8 @@ EXPECTED_TABLES = {
     "discoveries",
     "discovery_cursors",
     "source_backoff",
+    "api_keys",
+    "api_usage",
 }
 
 
@@ -39,6 +41,7 @@ def test_discover_returns_bundled_migrations_in_version_order():
         (3, "podcast_refresh"),
         (4, "discovery"),
         (5, "journalists"),
+        (6, "query_layer"),
     ]
     assert all(len(m.checksum) == 64 for m in migrations)
 
@@ -75,7 +78,7 @@ def test_migrate_creates_every_table_on_an_empty_database(fresh_db):
             "select tablename from pg_tables where schemaname = 'public'"
         ).fetchall()
     }
-    assert [m.version for m in applied] == [1, 2, 3, 4, 5]
+    assert [m.version for m in applied] == [1, 2, 3, 4, 5, 6]
     assert tables == EXPECTED_TABLES
 
 
@@ -248,30 +251,16 @@ def test_fetch_attempts_require_a_reason_unless_the_fetch_succeeded(fresh_db):
 
 
 @pytest.mark.integration
-def test_reader_role_cannot_read_contact_routes_but_can_read_the_fetch_log(fresh_db):
-    fresh_db.execute(
-        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ddm_reader') "
-        "THEN CREATE ROLE ddm_reader NOLOGIN; END IF; END $$"
-    )
-    fresh_db.execute(
-        "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO ddm_reader"
-    )
-    try:
-        migrate(fresh_db)
+def test_reader_role_cannot_read_contact_routes_but_can_read_the_fetch_log(reader_db):
+    migrate(reader_db)
 
-        def can_read(table):
-            return fresh_db.execute(
-                "select has_table_privilege('ddm_reader', %s, 'SELECT')", (table,)
-            ).fetchone()[0]
+    def can_read(table):
+        return reader_db.execute(
+            "select has_table_privilege('ddm_reader', %s, 'SELECT')", (table,)
+        ).fetchone()[0]
 
-        assert can_read("contact_routes") is False
-        assert can_read("fetch_attempts") is True
-    finally:
-        fresh_db.execute(
-            "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT ON TABLES FROM ddm_reader"
-        )
-        fresh_db.execute("DROP OWNED BY ddm_reader")
-        fresh_db.execute("DROP ROLE ddm_reader")
+    assert can_read("contact_routes") is False
+    assert can_read("fetch_attempts") is True
 
 
 @pytest.mark.integration

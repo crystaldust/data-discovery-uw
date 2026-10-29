@@ -1,0 +1,34 @@
+{% from "_status.html" import checked, activity %}
+{% if error %}
+<p role="alert"><mark>{{ error }}</mark></p>
+{% elif page %}
+<figure class="overflow-auto"><table>
+  <thead>
+    <tr><th>Name</th><th>Type</th><th>Language</th><th>Categories / outlets</th>
+        <th>Latest activity</th><th>Verification</th><th>Routes</th><th>First seen</th></tr>
+  </thead>
+  <tbody>
+  {% for s in page.items %}
+    <tr>
+      <td><a href="/entities/{{ s.entity_id }}">{{ s.display_name or "(no name)" }}</a></td>
+      <td>{{ s.entity_type }}</td>
+      <td>{{ s.language or "—" }}</td>
+      <td>{{ (s.categories or s.outlets) | join(", ") or "—" }}</td>
+      <td>{{ activity(s) }}</td>
+      <td>{{ checked(s) }}</td>
+      <td>{{ s.contact_routes }}</td>
+      <td>{{ s.first_seen_kind }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8">No matches.</td></tr>
+  {% endfor %}
+  </tbody>
+</table></figure>
+<nav>
+  <ul>
+    {% if links.prev is not none %}<li><a href="/?{{ links.prev }}" hx-get="/search?{{ links.prev }}" hx-target="#results" hx-push-url="/?{{ links.prev }}">Previous</a></li>{% endif %}
+    <li>Page {{ number }}</li>
+    {% if links.next %}<li><a href="/?{{ links.next }}" hx-get="/search?{{ links.next }}" hx-target="#results" hx-push-url="/?{{ links.next }}">Next</a></li>{% endif %}
+  </ul>
+</nav>
+{% endif %}

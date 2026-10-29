@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Discoveries · Data Discovery Demo{% endblock %}
+{% block content %}
+<h1>Discoveries</h1>
+<form method="get" action="/discoveries">
+  <div class="grid">
+    <label>Classification
+      <select name="classification">
+        <option value="">all</option>
+        {% for c in classifications %}
+        <option value="{{ c }}" {% if form.classification == c %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Source
+      <select name="source">
+        <option value="">all</option>
+        {% for s in sources %}
+        <option value="{{ s }}" {% if form.source == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Type
+      <select name="entity_type">
+        <option value="">all</option>
+        {% for t in ["podcast", "journalist"] %}
+        <option value="{{ t }}" {% if form.entity_type == t %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <button type="submit">Filter</button>
+</form>
+{% if error %}<p role="alert"><mark>{{ error }}</mark></p>{% endif %}
+{% if page %}
+<figure class="overflow-auto"><table>
+  <thead><tr><th>Run</th><th>Source</th><th>Name</th><th>Type</th><th>Classification</th>
+             <th>Matched</th><th>Method</th><th>Score</th></tr></thead>
+  <tbody>
+  {% for x in page.items %}
+    <tr>
+      <td>{{ x.run_id }} · {{ x.run_at | day }}</td>
+      <td>{{ x.source }}</td>
+      <td><a href="/entities/{{ x.entity_id }}">{{ x.entity_name or "(no name)" }}</a></td>
+      <td>{{ x.entity_type }}</td>
+      <td>{{ x.classification }}</td>
+      <td>{% if x.matched_entity_id %}<a href="/entities/{{ x.matched_entity_id }}">{{ x.matched_name or "(no name)" }}</a>{% else %}—{% endif %}</td>
+      <td>{{ x.method }}</td>
+      <td>{{ "%.2f" | format(x.score) if x.score is not none else "—" }}</td>
+    </tr>
+  {% else %}<tr><td colspan="8">No discoveries.</td></tr>{% endfor %}
+  </tbody>
+</table></figure>
+<nav><ul>
+  {% if links.prev is not none %}<li><a href="/discoveries?{{ links.prev }}">Previous</a></li>{% endif %}
+  {% if links.next %}<li><a href="/discoveries?{{ links.next }}">Next</a></li>{% endif %}
+</ul></nav>
+{% endif %}
+{% endblock %}

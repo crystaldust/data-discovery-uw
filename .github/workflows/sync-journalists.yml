@@ -66,3 +66,10 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           AUTHOR_FEEDS: ${{ inputs.author_feeds || '50' }}
         run: uv run --no-dev ddm sync-bylines --author-feeds "$AUTHOR_FEEDS"
+
+      # Also after a partial run: whatever it committed should be searchable.
+      - name: Refresh search view
+        if: ${{ !cancelled() }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run --no-dev ddm refresh-search
