@@ -42,6 +42,7 @@ def test_discover_returns_bundled_migrations_in_version_order():
         (4, "discovery"),
         (5, "journalists"),
         (6, "query_layer"),
+        (7, "usage_summary"),
     ]
     assert all(len(m.checksum) == 64 for m in migrations)
 
@@ -78,7 +79,7 @@ def test_migrate_creates_every_table_on_an_empty_database(fresh_db):
             "select tablename from pg_tables where schemaname = 'public'"
         ).fetchall()
     }
-    assert [m.version for m in applied] == [1, 2, 3, 4, 5, 6]
+    assert [m.version for m in applied] == [1, 2, 3, 4, 5, 6, 7]
     assert tables == EXPECTED_TABLES
 
 

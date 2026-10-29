@@ -1,0 +1,54 @@
+name: ci
+
+# Lint and the full test suite against a throwaway Postgres 18, on every push and pull
+# request. The database below exists only inside this job; its password is the same
+# local-only value as docker-compose.yml, not a secret.
+
+# Pull requests cover feature branches; push covers what lands on main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: ddm
+          POSTGRES_PASSWORD: ddm-local-only
+          POSTGRES_DB: ddm
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ddm -d ddm"
+          --health-interval 2s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install
+        run: uv sync --frozen
+
+      - name: Lint
+        run: |
+          uv run ruff check src tests spikes app
+          uv run ruff format --check src tests spikes app
+
+      # Fails below the coverage floor set in pyproject.toml.
+      - name: Test
+        env:
+          DDM_TEST_DATABASE_URL: postgresql://ddm:ddm-local-only@localhost:5432/ddm
+        run: uv run pytest -o addopts="" -q --cov=ddm --cov-report=term

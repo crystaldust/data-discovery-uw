@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 import psycopg
 from psycopg.rows import dict_row
 
+from ddm.query.costs import Costs, get_costs
+
 RECENT_RUNS = 20
 
 ENTITY_COUNTS = """
@@ -106,6 +108,7 @@ class Metrics:
     recent_runs: tuple[RunRow, ...]
     db_size_bytes: int
     search_refreshed_at: datetime | None
+    costs: Costs
 
 
 def get_metrics(conn: psycopg.Connection, now: datetime | None = None) -> Metrics:
@@ -126,4 +129,5 @@ def get_metrics(conn: psycopg.Connection, now: datetime | None = None) -> Metric
             recent_runs=rows(RUNS, RunRow),
             db_size_bytes=database["db_size_bytes"],
             search_refreshed_at=database["search_refreshed_at"],
+            costs=get_costs(conn, params["now"]),
         )

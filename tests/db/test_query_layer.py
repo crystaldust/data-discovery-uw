@@ -308,3 +308,24 @@ def test_the_view_refreshes_when_the_planner_chooses_parallel_workers(db):
         db.execute("RESET ALL")
 
     assert db.execute("SELECT count(last_activity_at) FROM entity_search").fetchone()[0] == 50
+
+
+def test_daily_usage_is_readable_without_key_ids(db, reader):
+    key_id = db.execute(
+        "INSERT INTO api_keys (label, key_hash) VALUES ('t', %s) RETURNING key_id",
+        (hashlib.sha256(b"daily").digest(),),
+    ).fetchone()[0]
+    db.execute(
+        "INSERT INTO api_usage VALUES (%s, '2026-10-28 10:01Z', 'api', 'entities', 3),"
+        " (%s, '2026-10-28 11:05Z', 'api', 'metrics', 2),"
+        " (%s, '2026-10-28 11:05Z', 'mcp', 'ping', 1)",
+        (key_id, key_id, key_id),
+    )
+
+    rows = reader.execute(
+        "SELECT day::date::text, surface, calls FROM api_usage_daily ORDER BY surface"
+    ).fetchall()
+    columns = [c.name for c in reader.execute("SELECT * FROM api_usage_daily LIMIT 0").description]
+
+    assert rows == [("2026-10-28", "api", 5), ("2026-10-28", "mcp", 1)]
+    assert "key_id" not in columns

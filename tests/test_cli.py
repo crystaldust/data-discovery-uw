@@ -102,7 +102,7 @@ def test_migrate_then_import_twice_reports_skip(monkeypatch, capsys, fresh_db, p
 
     out = capsys.readouterr().out
     assert "applied version=1 name=extensions_and_runs" in out
-    assert "schema up to date version=6" in out
+    assert "schema up to date version=7" in out
     assert "rows_in=3 rejected=0 new=3 changed=0 unchanged=0" in out
     assert "entities_created=2" in out
     assert "strong_id_merges=1" in out
@@ -704,3 +704,51 @@ def test_hash_password_refuses_short_or_mismatched_entries(monkeypatch, capsys, 
     assert main(["hash-password"]) == 1
 
     assert message in capsys.readouterr().err
+
+
+@pytest.mark.integration
+def test_table_counts_then_check_restore_round_trip(
+    monkeypatch, capsys, fresh_db, pg_url, tmp_path
+):
+    monkeypatch.setenv("DATABASE_URL", pg_url)
+    assert main(["migrate"]) == 0
+    out = tmp_path / "counts.json"
+
+    assert main(["table-counts", "--out", str(out)]) == 0
+    assert main(["check-restore", "--expected", str(out)]) == 0
+    fresh_db.execute(
+        "INSERT INTO sources (source_id, name, license, access) VALUES (99, 'x', 'x', 'x')"
+    )
+    assert main(["check-restore", "--expected", str(out)]) == 1
+
+    printed = capsys.readouterr().out
+    assert "mismatches=0" in printed
+    assert "MISMATCH sources: expected=5 actual=6" in printed
+
+
+@pytest.mark.integration
+def test_table_counts_prints_json_and_refuses_to_overwrite(
+    monkeypatch, capsys, fresh_db, pg_url, tmp_path
+):
+    monkeypatch.setenv("DATABASE_URL", pg_url)
+    assert main(["migrate"]) == 0
+    taken = tmp_path / "taken.json"
+    taken.write_text("keep")
+    capsys.readouterr()
+
+    assert main(["table-counts"]) == 0
+    printed = capsys.readouterr().out
+    assert main(["table-counts", "--out", str(taken)]) == 1
+
+    assert '"schema_migrations": 7' in printed
+    assert taken.read_text() == "keep"
+
+
+def test_check_restore_reports_a_bad_counts_file(monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("DATABASE_URL", SECRET_URL)
+    bad = tmp_path / "bad.json"
+    bad.write_text("nope")
+
+    assert main(["check-restore", "--expected", str(bad)]) == 1
+
+    assert "cannot read counts" in capsys.readouterr().err

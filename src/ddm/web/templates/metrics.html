@@ -48,4 +48,37 @@
         <td>{{ "%.1f s" | format(r.duration_ms / 1000) if r.duration_ms is not none else "—" }}</td></tr>
   {% endfor %}</tbody>
 </table></figure>
+{% set c = m.costs %}
+<h2>Cost <small>(last {{ c.window_days }} days)</small></h2>
+{% if c.within_free_tiers %}
+<p><b>Current spend: $0.00</b> — every limited resource is below its free tier.
+   The paid estimate is what the same use would cost on the cheapest paid tier.</p>
+{% else %}
+<p><mark><b>A free-tier limit is reached</b></mark> — see the resources below; the paid estimates
+   show what that use costs on the cheapest paid tier.</p>
+{% endif %}
+<figure class="overflow-auto"><table>
+  <thead><tr><th>Resource</th><th>Used</th><th>Free limit</th><th>Paid estimate</th><th>Note</th></tr></thead>
+  <tbody>{% for r in c.resources %}
+    <tr><td>{{ r.resource }}</td>
+        <td>{{ "{:,}".format(r.used) }} {{ r.unit }}</td>
+        <td>{% if r.free_limit is none %}free{% else %}{{ "{:,.0f}".format(r.free_limit) }} {{ r.unit }}{% if r.share_of_free is not none %} ({{ "%.1f" | format(100 * r.share_of_free) }}%){% endif %}{% endif %}</td>
+        <td>{{ "$%.2f" | format(r.paid_estimate_usd) if r.paid_estimate_usd is not none else "—" }}</td>
+        <td><small>{{ r.note }}</small></td></tr>
+  {% endfor %}</tbody>
+</table></figure>
+<figure class="overflow-auto"><table>
+  <thead><tr><th>Source</th><th>Runs</th><th>ok / partial / failed</th><th>HTTP requests</th><th>MB fetched</th><th>Minutes</th></tr></thead>
+  <tbody>{% for s in c.sources %}
+    <tr><td>{{ s.source }}</td><td>{{ s.runs }}</td><td>{{ s.ok }} / {{ s.partial }} / {{ s.failed }}</td>
+        <td>{{ "{:,}".format(s.http_requests) }}</td><td>{{ s.mb_fetched }}</td><td>{{ s.minutes }}</td></tr>
+  {% else %}<tr><td colspan="6">No runs in this window.</td></tr>{% endfor %}</tbody>
+</table></figure>
+<figure class="overflow-auto"><table>
+  <thead><tr><th>Day</th><th>Surface</th><th>API / MCP calls</th></tr></thead>
+  <tbody>{% for a in c.api_calls %}<tr><td>{{ a.day }}</td><td>{{ a.surface }}</td><td>{{ a.calls }}</td></tr>
+  {% else %}<tr><td colspan="3">No calls in this window.</td></tr>{% endfor %}</tbody>
+</table></figure>
+<p><small>Prices as of {{ c.prices_as_of }}:
+  {% for url in c.price_sources %}<a href="{{ url }}" rel="noopener noreferrer" target="_blank">{{ url }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</small></p>
 {% endblock %}

@@ -245,3 +245,11 @@ def test_an_abandoned_export_closes_its_connection_instead_of_reusing_it(db, poo
         assert EXPORT_SLOTS.acquire(blocking=False)
     for _ in range(MAX_CONCURRENT_EXPORTS):
         EXPORT_SLOTS.release()
+
+
+def test_metrics_page_has_a_cost_section_citing_prices(logged_in, db):
+    page = logged_in.get("/metrics").text
+
+    assert "Current spend: $0.00" in page and "every limited resource" in page
+    assert "Neon storage" in page and "GitHub Actions minutes" in page
+    assert "https://neon.com/pricing" in page and "non-commercial" in page
