@@ -4,5 +4,8 @@
     "app/main.py": {
       "maxDuration": 60
     }
-  }
+  },
+  "regions": [
+    "syd1"
+  ]
 }
