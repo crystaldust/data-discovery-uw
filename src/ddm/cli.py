@@ -62,6 +62,7 @@ from ddm.ingest.wikidata_sync import (
     JournalistSyncReport,
     sync_journalists,
 )
+from ddm.ops.counts import CountsInputError, compare_counts, counts_json, read_counts, table_counts
 from ddm.query.refresh import refresh_search
 from ddm.sources.outlet_rss import public_url
 from ddm.sources.podcastindex import PodcastIndexClient
@@ -183,6 +184,23 @@ def _add_access_commands(commands) -> None:
     )
 
 
+def _add_ops_commands(commands) -> None:
+    counts = commands.add_parser(
+        "table-counts", help="print row counts of every table and materialized view (JSON)"
+    )
+    counts.add_argument("--out", type=Path, help="write to this new file instead")
+    counts.add_argument(
+        "--exclude", action="append", default=[], help="leave out this table (repeatable)"
+    )
+    check = commands.add_parser(
+        "check-restore", help="compare this database's row counts with a counts file"
+    )
+    check.add_argument("--expected", type=Path, required=True, help="counts JSON from a backup")
+    check.add_argument(
+        "--exclude", action="append", default=[], help="leave out this table (repeatable)"
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ddm", description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -190,6 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_sync_commands(commands)
     _add_eval_commands(commands)
     _add_access_commands(commands)
+    _add_ops_commands(commands)
     return parser
 
 
@@ -479,6 +498,27 @@ def _run_hash_password() -> None:
     print(hash_password(password))
 
 
+def _run_table_counts(url: str, out: Path | None, exclude: Sequence[str]) -> None:
+    with _connect(url) as conn:
+        text = counts_json(table_counts(conn, exclude))
+    if out is None:
+        print(text, end="")
+        return
+    with open(out, "x", encoding="utf-8") as handle:  # never over an existing file
+        handle.write(text)
+    print(f"counts written to {out}")
+
+
+def _run_check_restore(url: str, expected: Path, exclude: Sequence[str]) -> int:
+    wanted = read_counts(expected)
+    with _connect(url) as conn:
+        diffs = compare_counts(wanted, table_counts(conn, exclude))
+    for d in diffs:
+        print(f"MISMATCH {d.relation}: expected={d.expected} actual={d.actual}")
+    print(f"relations={len(wanted)} mismatches={len(diffs)}")
+    return 1 if diffs else 0
+
+
 def _run_with_database(args: argparse.Namespace, url: str) -> int:
     handlers = {
         "migrate": lambda: _run_migrate(url),
@@ -492,6 +532,8 @@ def _run_with_database(args: argparse.Namespace, url: str) -> int:
         "refresh-search": lambda: _run_refresh_search(url),
         "create-api-key": lambda: _run_create_api_key(url, args.label, args.rate_limit, args.out),
         "revoke-api-key": lambda: _run_revoke_api_key(url, args.key_id),
+        "table-counts": lambda: _run_table_counts(url, args.out, args.exclude),
+        "check-restore": lambda: _run_check_restore(url, args.expected, args.exclude),
     }
     return handlers[args.command]() or 0
 
@@ -525,6 +567,7 @@ USER_ERRORS = (
     JournalistSyncBusy,
     BylineInputError,
     AccessInputError,
+    CountsInputError,
 )
 
 

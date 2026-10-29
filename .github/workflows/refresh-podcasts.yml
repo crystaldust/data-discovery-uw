@@ -1,11 +1,14 @@
 name: refresh-podcasts
 
-# Re-fetch baseline podcast feeds and record what changed (phase 3; phase 7 adds a schedule).
+# Re-fetch baseline podcast feeds and record what changed. Daily at 18:00 UTC (early
+# morning in Sydney), 300 feeds least recently checked first; also by hand.
 # Runs here rather than on a developer machine so feeds are reached over a clean network
 # with no proxy. The fetcher itself enforces the honest User-Agent, robots.txt, per-host
 # spacing and stopping on 401/403/429; this workflow only supplies settings.
 
 on:
+  schedule:
+    - cron: "0 18 * * *"
   workflow_dispatch:
     inputs:
       limit:
@@ -53,8 +56,9 @@ jobs:
 
       - name: Refresh
         env:
-          LIMIT: ${{ inputs.limit }}
-          SAME_AS: ${{ inputs.same_as }}
+          # Scheduled runs have no inputs.
+          LIMIT: ${{ inputs.limit || '300' }}
+          SAME_AS: ${{ inputs.same_as || '' }}
         run: |
           if [ -n "$SAME_AS" ]; then
             uv run --no-dev ddm refresh-podcasts --same-as "$SAME_AS"

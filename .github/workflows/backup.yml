@@ -1,0 +1,98 @@
+name: backup
+
+# Weekly encrypted backup of the whole database. pg_dump's output is piped straight into
+# age, so only ciphertext ever touches the runner's disk; the artifact is encrypted to a
+# public key whose private half is kept off GitHub (artifacts of a public repository can
+# be downloaded by any signed-in user). Row counts are taken before and after the dump:
+# if they differ, something wrote during the backup and the run fails. The counts (numbers
+# only) go with the artifact so a restore can be checked against them.
+
+on:
+  schedule:
+    # Sunday 20:00 UTC, an hour after the weekly journalist sync.
+    - cron: "0 20 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The owner database URL is given only to the steps that use it, not to the actions.
+    env:
+      BACKUP_AGE_RECIPIENT: ${{ vars.BACKUP_AGE_RECIPIENT }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Check settings and hide the database host from the public log
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          test -n "$DATABASE_URL" || { echo "secret DATABASE_URL is not set"; exit 1; }
+          case "$BACKUP_AGE_RECIPIENT" in
+            age1*) ;;
+            *) echo "variable BACKUP_AGE_RECIPIENT must be an age public key (age1...)"; exit 1 ;;
+          esac
+          host=$(python3 -c 'import os, urllib.parse; print(urllib.parse.urlsplit(os.environ["DATABASE_URL"]).hostname or "")')
+          test -n "$host" || { echo "DATABASE_URL has no host"; exit 1; }
+          echo "::add-mask::$host"
+
+      - name: Install
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+          uv sync --frozen --no-dev
+
+      # api_usage gains a row with every API/MCP call, so it is left out of the comparison.
+      - name: Count rows before
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run --no-dev ddm table-counts --exclude api_usage --out before.json
+
+      # pg_dump 18 from the official image (the runner's client is older than the server).
+      # The URL reaches the container through the environment, not the command line.
+      - name: Dump and encrypt
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -o pipefail
+          name="ddm-$(date -u +%Y%m%dT%H%MZ).dump.age"
+          docker run --rm -e DATABASE_URL postgres:18 \
+            sh -c 'pg_dump --format=custom --no-owner --no-acl "$DATABASE_URL"' \
+            | age -r "$BACKUP_AGE_RECIPIENT" > "$name"
+          echo "BACKUP_FILE=$name" >> "$GITHUB_ENV"
+
+      - name: Count rows after and compare
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          uv run --no-dev ddm table-counts --exclude api_usage --out after.json
+          cmp before.json after.json || { echo "rows changed during the backup; run it again"; exit 1; }
+          mv after.json counts.json
+
+      - name: Summary
+        run: |
+          {
+            echo "### Backup"
+            echo "- file: \`$BACKUP_FILE\`"
+            echo "- size: $(du -h "$BACKUP_FILE" | cut -f1)"
+            echo "- sha256: \`$(sha256sum "$BACKUP_FILE" | cut -d' ' -f1)\`"
+            echo "- relations counted: $(python3 -c 'import json; print(len(json.load(open("counts.json"))))')"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: db-backup
+          path: |
+            ${{ env.BACKUP_FILE }}
+            counts.json
+          retention-days: 14
+          if-no-files-found: error

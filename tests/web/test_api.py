@@ -172,3 +172,15 @@ def test_discovery_sources_are_the_ones_that_classify(client, db, api_key):
     bad = client.get("/api/v1/discoveries", params={"source": "wikidata"}, headers=headers)
 
     assert ok.status_code == 200 and bad.status_code == 422
+
+
+def test_metrics_include_costs(client, db, api_key):
+    body = client.get("/api/v1/metrics", headers=auth(api_key[1])).json()
+
+    costs = body["data"]["costs"]
+    assert costs["within_free_tiers"] is True
+    assert [r["resource"] for r in costs["resources"]] == [
+        "Neon storage",
+        "GitHub Actions minutes",
+        "Vercel function calls",
+    ]

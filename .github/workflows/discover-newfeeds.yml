@@ -1,11 +1,14 @@
 name: discover-newfeeds
 
-# Classify feeds Podcast Index added since the last run (phase 4; phase 7 adds a schedule).
+# Classify feeds Podcast Index added since the last run. Daily at 18:30 UTC, 500 feeds;
+# also by hand.
 # Runs here because the API client ignores proxy settings by design and some developer
 # networks need one. The job itself enforces the honest User-Agent, 1 request per second,
 # stopping on 401/403/429 and remembering the backoff; this workflow only supplies settings.
 
 on:
+  schedule:
+    - cron: "30 18 * * *"
   workflow_dispatch:
     inputs:
       limit:
@@ -52,7 +55,8 @@ jobs:
 
       - name: Discover
         env:
-          LIMIT: ${{ inputs.limit }}
+          # Scheduled runs have no inputs.
+          LIMIT: ${{ inputs.limit || '500' }}
         # Exit code 3 means the source refused or was down: the run is 'partial' and its
         # committed batches are kept. Show it as a failed step so it gets noticed.
         run: uv run --no-dev ddm discover-newfeeds --limit "$LIMIT"
