@@ -109,7 +109,20 @@ table's row count with `counts.json`. A mismatch exits non-zero and names the ta
 The drill checks the data. It does not restore roles: the dump is taken without owners
 or grants, so it restores into any Postgres 18.
 
-Last drill: _to be filled in from the first production backup._
+Last drill, 2026-10-29: production backup from `backup` run 40853427951, restored on a
+laptop into the local Postgres 18 container:
+
+```
+$ ops/restore-drill.sh
+drill started 2026-10-29T09:57:31Z backup run 40853427951
+artifact ddm-20261029T0955Z.dump.age  81M
+restored into local database ddm_restore in 111 s
+relations=19 mismatches=0
+drill finished 2026-10-29T09:59:24Z in 113 s
+```
+
+All 19 tables and views (everything but `api_usage`) have the same row counts as when
+the backup was taken. Most of the time is the artifact download.
 
 ### Restoring for real
 
