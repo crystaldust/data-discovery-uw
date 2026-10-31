@@ -35,9 +35,22 @@ GitHub Actions (scheduled jobs, CI, backups)          Vercel (syd1)
 
 Every job also runs by hand from the Actions tab (**Run workflow**), with inputs.
 
-**Exit code 3 means "partial".** A source refused us (401/403/429) or was down. What was
-fetched is committed and the backoff is remembered, so the job never retries sooner.
-The step is shown as failed on purpose, so that someone notices.
+GitHub starts scheduled runs late when it is busy: the first scheduled runs began 3½ to
+4½ hours after their cron times. The jobs do not depend on the exact hour.
+
+**Exit code 3 means "partial"** for `discover-newfeeds` and `sync-journalists`. A source
+refused us (401/403/429) or was down, so the run stopped early. What was fetched is
+committed and the backoff is remembered, so the job never retries sooner. The step is
+shown as failed on purpose, so that someone notices.
+
+`refresh-podcasts` records a run as `partial` too, whenever any feed could not be fetched,
+but exits 0. Hundreds of independent hosts make up the catalog, much of it from 2023:
+every day some feeds are gone (404), some hosts no longer answer, and a few refuse us
+(10 hosts in a run of 300 feeds on 2026-10-30). Each refusing host gets the usual
+backoff. Failing the step for that would turn the job red every day and hide a real
+failure. The summary line (`status=partial … failed=… skipped=…`) has the counts, and
+**Metrics → Cost** lists ok and partial runs per source. The step fails only when the run itself fails (database, settings,
+a crash).
 
 ## Alerts
 
